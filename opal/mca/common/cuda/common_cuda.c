@@ -10,7 +10,9 @@
  * Copyright (c) 2004-2006 The Regents of the University of California.
  *                         All rights reserved.
  * Copyright (c) 2011-2015 NVIDIA Corporation.  All rights reserved.
- * Copyright (c) 2015 Cisco Systems, Inc.  All rights reserved.
+ * Copyright (c) 2015      Cisco Systems, Inc.  All rights reserved.
+ * Copyright (c) 2015      Research Organization for Information Science
+ *                         and Technology (RIST). All rights reserved.
  * $COPYRIGHT$
  *
  * Additional copyrights may follow
@@ -20,9 +22,7 @@
 
 /**
  * This file contains various support functions for doing CUDA
- * operations.  Some of the features are only available in CUDA 4.1
- * and later, so some code is conditionalized around the
- * OPAL_CUDA_SUPPORT_41 macro.
+ * operations.
  */
 #include "opal_config.h"
 
@@ -36,8 +36,9 @@
 #include "opal/util/output.h"
 #include "opal/util/show_help.h"
 #include "opal/util/proc.h"
+#include "opal/util/argv.h"
 
-#include "opal/mca/mpool/base/base.h"
+#include "opal/mca/rcache/base/base.h"
 #include "opal/runtime/opal_params.h"
 #include "opal/mca/timer/base/base.h"
 #include "opal/mca/dl/base/base.h"
@@ -88,13 +89,11 @@ struct cudaFunctionTable {
     int (*cuEventDestroy)(CUevent);
     int (*cuStreamWaitEvent)(CUstream, CUevent, unsigned int);
     int (*cuMemGetAddressRange)(CUdeviceptr*, size_t*, CUdeviceptr);
-#if OPAL_CUDA_SUPPORT_41
     int (*cuIpcGetEventHandle)(CUipcEventHandle*, CUevent);
     int (*cuIpcOpenEventHandle)(CUevent*, CUipcEventHandle);
     int (*cuIpcOpenMemHandle)(CUdeviceptr*, CUipcMemHandle, unsigned int);
     int (*cuIpcCloseMemHandle)(CUdeviceptr);
     int (*cuIpcGetMemHandle)(CUipcMemHandle*, CUdeviceptr);
-#endif /* OPAL_CUDA_SUPPORT_41 */
     int (*cuCtxGetDevice)(CUdevice *);
     int (*cuDeviceCanAccessPeer)(int *, CUdevice, CUdevice);
     int (*cuDeviceGet)(CUdevice *, int);
@@ -156,7 +155,6 @@ OBJ_CLASS_INSTANCE(common_cuda_mem_regs_t,
                    NULL,
                    NULL);
 
-#if OPAL_CUDA_SUPPORT_41
 static int mca_common_cuda_async = 1;
 static int mca_common_cuda_cumemcpy_async;
 #if OPAL_ENABLE_DEBUG
@@ -223,8 +221,6 @@ static void cuda_dump_memhandle(int, void *, char *) __opal_attribute_unused__ ;
 #define CUDA_DUMP_EVTHANDLE(a)
 #endif /* OPAL_ENABLE_DEBUG */
 
-#endif /* OPAL_CUDA_SUPPORT_41 */
-
 /* This is a seperate function so we can see these variables with ompi_info and
  * also set them with the tools interface */
 void mca_common_cuda_register_mca_variables(void)
@@ -263,7 +259,6 @@ void mca_common_cuda_register_mca_variables(void)
                                  MCA_BASE_VAR_SCOPE_READONLY,
                                  &mca_common_cuda_warning);
 
-#if OPAL_CUDA_SUPPORT_41
     /* Use this flag to test async vs sync copies */
     mca_common_cuda_async = 1;
     (void) mca_base_var_register("ompi", "mpi", "common_cuda", "memcpy_async",
@@ -280,7 +275,6 @@ void mca_common_cuda_register_mca_variables(void)
                                  OPAL_INFO_LVL_9,
                                  MCA_BASE_VAR_SCOPE_READONLY,
                                  &cuda_event_max);
-#endif /* OPAL_CUDA_SUPPORT_41 */
 
     /* Use this flag to test cuMemcpyAsync vs cuMemcpy */
     mca_common_cuda_cumemcpy_async = 1;
@@ -465,13 +459,11 @@ int mca_common_cuda_stage_one_init(void)
     OPAL_CUDA_DLSYM(libcuda_handle, cuMemFree);
     OPAL_CUDA_DLSYM(libcuda_handle, cuMemAlloc);
     OPAL_CUDA_DLSYM(libcuda_handle, cuMemGetAddressRange);
-#if OPAL_CUDA_SUPPORT_41
     OPAL_CUDA_DLSYM(libcuda_handle, cuIpcGetEventHandle);
     OPAL_CUDA_DLSYM(libcuda_handle, cuIpcOpenEventHandle);
     OPAL_CUDA_DLSYM(libcuda_handle, cuIpcOpenMemHandle);
     OPAL_CUDA_DLSYM(libcuda_handle, cuIpcCloseMemHandle);
     OPAL_CUDA_DLSYM(libcuda_handle, cuIpcGetMemHandle);
-#endif /* OPAL_CUDA_SUPPORT_41 */
     OPAL_CUDA_DLSYM(libcuda_handle, cuCtxGetDevice);
     OPAL_CUDA_DLSYM(libcuda_handle, cuDeviceCanAccessPeer);
     OPAL_CUDA_DLSYM(libcuda_handle, cuDeviceGet);
@@ -595,7 +587,6 @@ static int mca_common_cuda_stage_three_init(void)
         return OPAL_ERROR;
     }
 
-#if OPAL_CUDA_SUPPORT_41
     if (true == mca_common_cuda_enabled) {
         /* Set up an array to store outstanding IPC async copy events */
         cuda_event_ipc_num_used = 0;
@@ -633,7 +624,6 @@ static int mca_common_cuda_stage_three_init(void)
         }
     }
 
-#endif /* OPAL_CUDA_SUPPORT_41 */
     if (true == mca_common_cuda_enabled) {
         /* Set up an array to store outstanding async dtoh events.  Used on the
          * sending side for asynchronous copies. */
@@ -722,7 +712,7 @@ static int mca_common_cuda_stage_three_init(void)
                                OPAL_PROC_MY_HOSTNAME, res, mem_reg->msg);
             } else {
                 opal_output_verbose(20, mca_common_cuda_output,
-                                    "CUDA: cuMemHostRegister OK on mpool %s: "
+                                    "CUDA: cuMemHostRegister OK on rcache %s: "
                                     "address=%p, bufsize=%d",
                                     mem_reg->msg, mem_reg->ptr, (int)mem_reg->amount);
             }
@@ -805,7 +795,7 @@ static int mca_common_cuda_stage_three_init(void)
  * Cleanup all CUDA resources.
  *
  * Note: Still figuring out how to get cuMemHostUnregister called from the smcuda sm
- * mpool.  Looks like with the memory pool from openib (grdma), the unregistering is
+ * rcache.  Looks like with the memory pool from openib (grdma), the unregistering is
  * called as the free list is destructed.  Not true for the sm mpool.  This means we
  * are currently still leaking some host memory we registered with CUDA.
  */
@@ -959,7 +949,7 @@ void mca_common_cuda_register(void *ptr, size_t amount, char *msg) {
                            OPAL_PROC_MY_HOSTNAME, res, msg);
         } else {
             opal_output_verbose(20, mca_common_cuda_output,
-                                "CUDA: cuMemHostRegister OK on mpool %s: "
+                                "CUDA: cuMemHostRegister OK on rcache %s: "
                                 "address=%p, bufsize=%d",
                                 msg, ptr, (int)amount);
         }
@@ -994,26 +984,25 @@ void mca_common_cuda_unregister(void *ptr, char *msg) {
             /* If unregistering the memory fails, just continue.  This is during
              * shutdown.  Only print when running in verbose mode. */
             opal_output_verbose(20, mca_common_cuda_output,
-                                "CUDA: cuMemHostUnregister failed: ptr=%p, res=%d, mpool=%s",
+                                "CUDA: cuMemHostUnregister failed: ptr=%p, res=%d, rcache=%s",
                                 ptr, res, msg);
 
         } else {
             opal_output_verbose(20, mca_common_cuda_output,
-                                "CUDA: cuMemHostUnregister OK on mpool %s: "
+                                "CUDA: cuMemHostUnregister OK on rcache %s: "
                                 "address=%p",
                                 msg, ptr);
         }
     }
 }
 
-#if OPAL_CUDA_SUPPORT_41
 /*
  * Get the memory handle of a local section of memory that can be sent
  * to the remote size so it can access the memory.  This is the
  * registration function for the sending side of a message transfer.
  */
-int cuda_getmemhandle(void *base, size_t size, mca_mpool_base_registration_t *newreg,
-                      mca_mpool_base_registration_t *hdrreg)
+int cuda_getmemhandle(void *base, size_t size, mca_rcache_base_registration_t *newreg,
+                      mca_rcache_base_registration_t *hdrreg)
 
 {
     CUmemorytype memType;
@@ -1022,7 +1011,7 @@ int cuda_getmemhandle(void *base, size_t size, mca_mpool_base_registration_t *ne
     CUdeviceptr pbase;
     size_t psize;
 
-    mca_mpool_common_cuda_reg_t *cuda_reg = (mca_mpool_common_cuda_reg_t*)newreg;
+    mca_rcache_common_cuda_reg_t *cuda_reg = (mca_rcache_common_cuda_reg_t*)newreg;
     memHandle = (CUipcMemHandle *)cuda_reg->data.memHandle;
 
     /* We should only be there if this is a CUDA device pointer */
@@ -1101,11 +1090,11 @@ int cuda_getmemhandle(void *base, size_t size, mca_mpool_base_registration_t *ne
  * This function is called by the local side that called the cuda_getmemhandle.
  * There is nothing to be done so just return.
  */
-int cuda_ungetmemhandle(void *reg_data, mca_mpool_base_registration_t *reg)
+int cuda_ungetmemhandle(void *reg_data, mca_rcache_base_registration_t *reg)
 {
     opal_output_verbose(10, mca_common_cuda_output,
                         "CUDA: cuda_ungetmemhandle (no-op): base=%p", reg->base);
-    CUDA_DUMP_MEMHANDLE((100, ((mca_mpool_common_cuda_reg_t *)reg)->data.memHandle, "cuda_ungetmemhandle"));
+    CUDA_DUMP_MEMHANDLE((100, ((mca_rcache_common_cuda_reg_t *)reg)->data.memHandle, "cuda_ungetmemhandle"));
 
     return OPAL_SUCCESS;
 }
@@ -1116,12 +1105,12 @@ int cuda_ungetmemhandle(void *reg_data, mca_mpool_base_registration_t *reg)
  * remote side of a transfer.  newreg contains the new handle.  hddrreg contains
  * the memory handle that was received from the remote side.
  */
-int cuda_openmemhandle(void *base, size_t size, mca_mpool_base_registration_t *newreg,
-                       mca_mpool_base_registration_t *hdrreg)
+int cuda_openmemhandle(void *base, size_t size, mca_rcache_base_registration_t *newreg,
+                       mca_rcache_base_registration_t *hdrreg)
 {
     CUresult result;
     CUipcMemHandle *memHandle;
-    mca_mpool_common_cuda_reg_t *cuda_newreg = (mca_mpool_common_cuda_reg_t*)newreg;
+    mca_rcache_common_cuda_reg_t *cuda_newreg = (mca_rcache_common_cuda_reg_t*)newreg;
 
     /* Save in local variable to avoid ugly casting */
     memHandle = (CUipcMemHandle *)cuda_newreg->data.memHandle;
@@ -1158,10 +1147,10 @@ int cuda_openmemhandle(void *base, size_t size, mca_mpool_base_registration_t *n
 /*
  * Close a memory handle that refers to remote memory.
  */
-int cuda_closememhandle(void *reg_data, mca_mpool_base_registration_t *reg)
+int cuda_closememhandle(void *reg_data, mca_rcache_base_registration_t *reg)
 {
     CUresult result;
-    mca_mpool_common_cuda_reg_t *cuda_reg = (mca_mpool_common_cuda_reg_t*)reg;
+    mca_rcache_common_cuda_reg_t *cuda_reg = (mca_rcache_common_cuda_reg_t*)reg;
 
     /* Only attempt to close if we have valid context.  This can change if a call
      * to the fini function is made and we discover context is gone. */
@@ -1224,7 +1213,7 @@ void mca_common_cuda_destruct_event(uintptr_t event)
  * Put remote event on stream to ensure that the the start of the
  * copy does not start until the completion of the event.
  */
-void mca_common_wait_stream_synchronize(mca_mpool_common_cuda_reg_t *rget_reg)
+void mca_common_wait_stream_synchronize(mca_rcache_common_cuda_reg_t *rget_reg)
 {
 #if OPAL_CUDA_SYNC_MEMOPS
     /* No need for any of this with SYNC_MEMOPS feature */
@@ -1654,8 +1643,8 @@ int progress_one_cuda_htod_event(struct mca_btl_base_descriptor_t **frag) {
  * Need to make sure the handle we are retrieving from the cache is still
  * valid.  Compare the cached handle to the one received.
  */
-int mca_common_cuda_memhandle_matches(mca_mpool_common_cuda_reg_t *new_reg,
-                                      mca_mpool_common_cuda_reg_t *old_reg)
+int mca_common_cuda_memhandle_matches(mca_rcache_common_cuda_reg_t *new_reg,
+                                      mca_rcache_common_cuda_reg_t *old_reg)
 {
 
     if (0 == memcmp(new_reg->data.memHandle, old_reg->data.memHandle, sizeof(new_reg->data.memHandle))) {
@@ -1739,8 +1728,6 @@ static float mydifftime(opal_timer_t ts_start, opal_timer_t ts_end) {
 }
 #endif /* OPAL_ENABLE_DEBUG */
 
-#endif /* OPAL_CUDA_SUPPORT_41 */
-
 /* Routines that get plugged into the opal datatype code */
 static int mca_common_cuda_is_gpu_buffer(const void *pUserBuf, opal_convertor_t *convertor)
 {
@@ -1811,7 +1798,7 @@ static int mca_common_cuda_is_gpu_buffer(const void *pUserBuf, opal_convertor_t 
 #if !OPAL_CUDA_GET_ATTRIBUTES
             res = cuFunc.cuPointerGetAttribute(&memCtx,
                                                CU_POINTER_ATTRIBUTE_CONTEXT, dbuf);
-            if (OPAL_UNLIKELEY(res != CUDA_SUCCESS)) {
+            if (OPAL_UNLIKELY(res != CUDA_SUCCESS)) {
                 opal_output(0, "CUDA: error calling cuPointerGetAttribute: "
                             "res=%d, ptr=%p aborting...", res, pUserBuf);
                 return OPAL_ERROR;
@@ -2021,7 +2008,7 @@ int mca_common_cuda_get_address_range(void *pbase, size_t *psize, void *base)
  * not matching the BUFFER_ID of the buffer we are checking.  Return false
  * if the registration is still good.
  */
-bool mca_common_cuda_previously_freed_memory(mca_mpool_base_registration_t *reg)
+bool mca_common_cuda_previously_freed_memory(mca_rcache_base_registration_t *reg)
 {
     int res;
     unsigned long long bufID;
@@ -2053,7 +2040,7 @@ bool mca_common_cuda_previously_freed_memory(mca_mpool_base_registration_t *reg)
  * Also set SYNC_MEMOPS on any GPU registration to ensure that
  * synchronous copies complete before the buffer is accessed.
  */
-void mca_common_cuda_get_buffer_id(mca_mpool_base_registration_t *reg)
+void mca_common_cuda_get_buffer_id(mca_rcache_base_registration_t *reg)
 {
     int res;
     unsigned long long bufID = 0;

@@ -13,7 +13,7 @@
  *                         All rights reserved.
  * Copyright (c) 2009-2012 Cisco Systems, Inc.  All rights reserved.
  * Copyright (c) 2011      Oak Ridge National Labs.  All rights reserved.
- * Copyright (c) 2013-2015 Intel, Inc.  All rights reserved.
+ * Copyright (c) 2013-2016 Intel, Inc.  All rights reserved.
  * $COPYRIGHT$
  *
  * Additional copyrights may follow
@@ -221,7 +221,7 @@ static void accept_connection(const int accepted_fd,
 static int parse_uri(const uint16_t af_family,
                      const char* host,
                      const char *port,
-                     struct sockaddr* inaddr)
+                     struct sockaddr_storage* inaddr)
 {
     struct sockaddr_in *in;
 
@@ -260,7 +260,6 @@ static int parse_uri(const uint16_t af_family,
 static void process_set_peer(int fd, short args, void *cbdata)
 {
     mca_oob_tcp_peer_op_t *pop = (mca_oob_tcp_peer_op_t*)cbdata;
-    struct sockaddr inaddr;
     mca_oob_tcp_peer_t *peer;
     int rc=ORTE_SUCCESS;
     uint64_t *ui64 = (uint64_t*)(&pop->peer);
@@ -290,8 +289,10 @@ static void process_set_peer(int fd, short args, void *cbdata)
         }
     }
 
-    if ((rc = parse_uri(pop->af_family, pop->net, pop->port, (struct sockaddr*) &inaddr)) != ORTE_SUCCESS) {
+    maddr = OBJ_NEW(mca_oob_tcp_addr_t);
+    if (ORTE_SUCCESS != (rc = parse_uri(pop->af_family, pop->net, pop->port, (struct sockaddr_storage*) &(maddr->addr)))) {
         ORTE_ERROR_LOG(rc);
+        OBJ_RELEASE(maddr);
         goto cleanup;
     }
 
@@ -301,8 +302,6 @@ static void process_set_peer(int fd, short args, void *cbdata)
                         ORTE_NAME_PRINT(&pop->peer),
                         (NULL == pop->net) ? "NULL" : pop->net,
                         (NULL == pop->port) ? "NULL" : pop->port);
-    maddr = OBJ_NEW(mca_oob_tcp_addr_t);
-    memcpy(&maddr->addr, &inaddr, sizeof(inaddr));
     opal_list_append(&peer->addrs, &maddr->super);
 
  cleanup:
@@ -362,7 +361,7 @@ static void process_ping(int fd, short args, void *cbdata)
     }
 
     /* if we are already connecting, there is nothing to do */
-    if (MCA_OOB_TCP_CONNECTING == peer->state &&
+    if (MCA_OOB_TCP_CONNECTING == peer->state ||
         MCA_OOB_TCP_CONNECT_ACK == peer->state) {
         opal_output_verbose(2, orte_oob_base_framework.framework_output,
                             "%s:[%s:%d] already connecting to peer %s",
@@ -399,10 +398,10 @@ static void process_send(int fd, short args, void *cbdata)
     orte_process_name_t hop;
 
     opal_output_verbose(2, orte_oob_base_framework.framework_output,
-                        "%s:[%s:%d] processing send to peer %s:%d to channel =%d seq_num = %d",
+                        "%s:[%s:%d] processing send to peer %s:%d seq_num = %d",
                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
                         __FILE__, __LINE__,
-                        ORTE_NAME_PRINT(&op->msg->dst), op->msg->tag, op->msg->dst_channel, op->msg->seq_num);
+                        ORTE_NAME_PRINT(&op->msg->dst), op->msg->tag, op->msg->seq_num);
 
     /* do we have a route to this peer (could be direct)? */
     hop = orte_routed.get_route(&op->msg->dst);

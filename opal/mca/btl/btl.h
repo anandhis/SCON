@@ -3,7 +3,7 @@
  * Copyright (c) 2004-2007 The Trustees of Indiana University and Indiana
  *                         University Research and Technology
  *                         Corporation.  All rights reserved.
- * Copyright (c) 2004-2008 The University of Tennessee and The University
+ * Copyright (c) 2004-2016 The University of Tennessee and The University
  *                         of Tennessee Research Foundation.  All rights
  *                         reserved.
  * Copyright (c) 2004-2005 High Performance Computing Center Stuttgart,
@@ -122,6 +122,7 @@
 #include "opal/datatype/opal_convertor.h"
 #include "opal/mca/mca.h"
 #include "opal/mca/mpool/mpool.h"
+#include "opal/mca/rcache/rcache.h"
 #include "opal/mca/crs/crs.h"
 #include "opal/mca/crs/base/base.h"
 
@@ -240,6 +241,9 @@ typedef uint8_t mca_btl_base_tag_t;
  * BTLs should not set this flag. */
 #define MCA_BTL_FLAGS_SINGLE_ADD_PROCS 0x20000
 
+/* The BTL is using progress thread and need the protection on matching */
+#define MCA_BTL_FLAGS_BTL_PROGRESS_THREAD_ENABLED 0x40000
+
 /* Default exclusivity levels */
 #define MCA_BTL_EXCLUSIVITY_HIGH     (64*1024) /* internal loopback */
 #define MCA_BTL_EXCLUSIVITY_DEFAULT  1024      /* GM/IB/etc. */
@@ -250,28 +254,29 @@ typedef uint8_t mca_btl_base_tag_t;
 #define MCA_BTL_ERROR_FLAGS_NONFATAL 0x2
 #define MCA_BTL_ERROR_FLAGS_ADD_CUDA_IPC 0x4
 
-/** registration flags */
+/** registration flags. the access flags are a 1-1 mapping with the mpool
+ * access flags. */
 enum {
     /** Allow local write on the registered region. If a region is registered
      * with this flag the registration can be used as the local handle for a
      * btl_get operation. */
-    MCA_BTL_REG_FLAG_LOCAL_WRITE   = 0x00000001,
+    MCA_BTL_REG_FLAG_LOCAL_WRITE   = MCA_RCACHE_ACCESS_LOCAL_WRITE,
     /** Allow remote read on the registered region. If a region is registered
      * with this flag the registration can be used as the remote handle for a
      * btl_get operation. */
-    MCA_BTL_REG_FLAG_REMOTE_READ   = 0x00000002,
+    MCA_BTL_REG_FLAG_REMOTE_READ   = MCA_RCACHE_ACCESS_REMOTE_READ,
     /** Allow remote write on the registered region. If a region is registered
      * with this flag the registration can be used as the remote handle for a
      * btl_put operation. */
-    MCA_BTL_REG_FLAG_REMOTE_WRITE  = 0x00000004,
+    MCA_BTL_REG_FLAG_REMOTE_WRITE  = MCA_RCACHE_ACCESS_REMOTE_WRITE,
     /** Allow remote atomic operations on the registered region. If a region is
      * registered with this flag the registration can be used as the remote
      * handle for a btl_atomic_op or btl_atomic_fop operation. */
-    MCA_BTL_REG_FLAG_REMOTE_ATOMIC = 0x00000008,
+    MCA_BTL_REG_FLAG_REMOTE_ATOMIC = MCA_RCACHE_ACCESS_REMOTE_ATOMIC,
     /** Allow any btl operation on the registered region. If a region is registered
      * with this flag the registration can be used as the local or remote handle for
      * any btl operation. */
-    MCA_BTL_REG_FLAG_ACCESS_ANY    = 0x0000000f,
+    MCA_BTL_REG_FLAG_ACCESS_ANY    = MCA_RCACHE_ACCESS_ANY,
 #if OPAL_CUDA_GDR_SUPPORT
     /** Region is in GPU memory */
     MCA_BTL_REG_FLAG_CUDA_GPU_MEM  = 0x00010000,

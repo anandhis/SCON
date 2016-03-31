@@ -13,7 +13,7 @@
  * Copyright (c) 2011-2014 Cisco Systems, Inc.  All rights reserved.
  * Copyright (c) 2011-2013 Los Alamos National Security, LLC.  All rights
  *                         reserved.
- * Copyright (c) 2013-2015 Intel, Inc.  All rights reserved.
+ * Copyright (c) 2013-2016 Intel, Inc.  All rights reserved.
  * $COPYRIGHT$
  *
  * Additional copyrights may follow
@@ -55,7 +55,6 @@
 
 #include "orte/mca/oob/base/base.h"
 #include "orte/mca/rml/base/base.h"
-#include "orte/mca/qos/base/base.h"
 #include "orte/mca/rml/rml_types.h"
 #include "orte/mca/routed/base/base.h"
 #include "orte/mca/routed/routed.h"
@@ -74,7 +73,6 @@
 #include "orte/mca/sstore/base/base.h"
 #endif
 #include "orte/mca/filem/base/base.h"
-#include "orte/mca/schizo/base/base.h"
 #include "orte/mca/state/base/base.h"
 #include "orte/mca/state/state.h"
 
@@ -342,26 +340,13 @@ static int rte_init(void)
         goto error;
     }
 
-    /* Messaging QoS Layer */
-    if (ORTE_SUCCESS != (ret = mca_base_framework_open(&orte_qos_base_framework, 0))) {
-        error = "orte_qos_base_open";
-        goto error;
-    }
-    if (ORTE_SUCCESS != (ret = orte_qos_base_select())) {
-        error = "orte_qos_base_select";
-        goto error;
-    }
-
     if (ORTE_SUCCESS != (ret = orte_errmgr_base_select())) {
         error = "orte_errmgr_base_select";
         goto error;
     }
     /* setup the global job and node arrays */
-    orte_job_data = OBJ_NEW(opal_pointer_array_t);
-    if (ORTE_SUCCESS != (ret = opal_pointer_array_init(orte_job_data,
-                                                       1,
-                                                       ORTE_GLOBAL_ARRAY_MAX_SIZE,
-                                                       1))) {
+    orte_job_data = OBJ_NEW(opal_hash_table_t);
+    if (ORTE_SUCCESS != (ret = opal_hash_table_init(orte_job_data, 128))) {
         ORTE_ERROR_LOG(ret);
         error = "setup job array";
         goto error;
@@ -388,7 +373,7 @@ static int rte_init(void)
     /* create and store the job data object */
     jdata = OBJ_NEW(orte_job_t);
     jdata->jobid = ORTE_PROC_MY_NAME->jobid;
-    opal_pointer_array_set_item(orte_job_data, 0, jdata);
+    opal_hash_table_set_value_uint32(orte_job_data, jdata->jobid, jdata);
     /* mark that the daemons have reported as we are the
      * only ones in the system right now, and we definitely
      * are running!
@@ -621,8 +606,9 @@ static int rte_init(void)
         free(contact_path);
     }
 
-    /* setup the PMIx framework - ensure it skips all non-PMIx components */
-    putenv("OMPI_MCA_pmix=^s1,s2,cray");
+    /* setup the PMIx framework - ensure it skips all non-PMIx components, but
+     * do not override anything we were given */
+    opal_setenv("OMPI_MCA_pmix", "^s1,s2,cray,isolated", false, &environ);
     if (OPAL_SUCCESS != (ret = mca_base_framework_open(&opal_pmix_base_framework, 0))) {
         ORTE_ERROR_LOG(ret);
         error = "orte_pmix_base_open";
@@ -633,6 +619,8 @@ static int rte_init(void)
         error = "opal_pmix_base_select";
         goto error;
     }
+    /* set the event base */
+    opal_pmix_base_set_evbase(orte_event_base);
 
     /* setup the routed info - the selected routed component
      * will know what to do.
@@ -723,17 +711,7 @@ static int rte_init(void)
         error = "orte_dfs_select";
         goto error;
     }
-    /* setup the schizo framework */
-    if (ORTE_SUCCESS != (ret = mca_base_framework_open(&orte_schizo_base_framework, 0))) {
-        ORTE_ERROR_LOG(ret);
-        error = "orte_schizo_base_open";
-        goto error;
-    }
-    if (ORTE_SUCCESS != (ret = orte_schizo_base_select())) {
-        ORTE_ERROR_LOG(ret);
-        error = "orte_schizo_select";
-        goto error;
-    }
+
     /* if a tool has launched us and is requesting event reports,
      * then set its contact info into the comm system
      */
@@ -797,10 +775,8 @@ static int rte_finalize(void)
         /** Remove the USR signal handlers */
         opal_event_signal_del(&sigusr1_handler);
         opal_event_signal_del(&sigusr2_handler);
-        if (orte_forward_job_control) {
-            opal_event_signal_del(&sigtstp_handler);
-            opal_event_signal_del(&sigcont_handler);
-        }
+        opal_event_signal_del(&sigtstp_handler);
+        opal_event_signal_del(&sigcont_handler);
         signals_set = false;
     }
 
@@ -810,7 +786,6 @@ static int rte_finalize(void)
     /* cleanup our data server */
     orte_data_server_finalize();
 
-    (void) mca_base_framework_close(&orte_schizo_base_framework);
     (void) mca_base_framework_close(&orte_dfs_base_framework);
     (void) mca_base_framework_close(&orte_filem_base_framework);
     /* output any lingering stdout/err data */
@@ -856,6 +831,9 @@ static int rte_finalize(void)
             fclose(orte_xml_fp);
         }
     }
+
+    /* release the job hash table */
+    OBJ_RELEASE(orte_job_data);
     return ORTE_SUCCESS;
 }
 

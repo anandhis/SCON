@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2015 Cisco Systems, Inc.  All rights reserved.
+ * Copyright (c) 2012-2016 Cisco Systems, Inc.  All rights reserved.
  *
  * $COPYRIGHT$
  *
@@ -19,6 +19,10 @@
 #endif
 #ifdef HAVE_UNISTD_H
 #include <unistd.h>
+#endif
+
+#if OPAL_COMMON_VERBS_USNIC_HAPPY
+#include "opal/mca/common/verbs_usnic/common_verbs_usnic.h"
 #endif
 
 /* This is crummy, but <infiniband/driver.h> doesn't work on all
@@ -89,10 +93,14 @@ int opal_common_verbs_fork_test(void)
     }
 #endif
 
-    /* Now rgister any necessary fake libibverbs drivers.  We
+#if OPAL_COMMON_VERBS_USNIC_HAPPY
+    /* Now register any necessary fake libibverbs drivers.  We
        piggyback loading these fake drivers on the fork test because
-       they must be loaded before ibv_get_device_list() is invoked. */
-    opal_common_verbs_register_fake_drivers();
+       they must be loaded before ibv_get_device_list() is invoked.
+       Note that this routine is in a different common component (see
+       comments over there for an explanation why).  */
+    opal_common_verbs_usnic_register_fake_drivers();
+#endif
 
     return ret;
 }

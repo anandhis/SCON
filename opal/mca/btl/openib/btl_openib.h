@@ -12,7 +12,7 @@
  *                         All rights reserved.
  * Copyright (c) 2006-2011 Cisco Systems, Inc.  All rights reserved.
  * Copyright (c) 2006-2009 Mellanox Technologies. All rights reserved.
- * Copyright (c) 2006-2015 Los Alamos National Security, LLC.  All rights
+ * Copyright (c) 2006-2016 Los Alamos National Security, LLC.  All rights
  *                         reserved.
  * Copyright (c) 2006-2007 Voltaire All rights reserved.
  * Copyright (c) 2009-2010 Oracle and/or its affiliates.  All rights reserved.
@@ -45,9 +45,11 @@
 #include "opal/mca/event/event.h"
 #include "opal/threads/threads.h"
 #include "opal/mca/btl/btl.h"
+#include "opal/mca/rcache/rcache.h"
 #include "opal/mca/mpool/mpool.h"
 #include "opal/mca/btl/base/btl_base_error.h"
 #include "opal/mca/btl/base/base.h"
+#include "opal/runtime/opal_progress_threads.h"
 
 #include "connect/connect.h"
 
@@ -183,8 +185,11 @@ struct mca_btl_openib_component_t {
     opal_mutex_t                            ib_lock;
     /**< lock for accessing module state */
 
-    char* ib_mpool_name;
-    /**< name of ib memory pool */
+    char* ib_mpool_hints;
+    /**< hints for selecting an mpool component */
+
+    char *ib_rcache_name;
+    /**< name of ib registration cache */
 
     uint8_t num_pp_qps;          /**< number of pp qp's */
     uint8_t num_srq_qps;         /**< number of srq qp's */
@@ -227,9 +232,7 @@ struct mca_btl_openib_component_t {
     int     apm_ports;
     unsigned int buffer_alignment;    /**< Preferred communication buffer alignment in Bytes (must be power of two) */
     int32_t error_counter;           /**< Counts number on error events that we got on all devices */
-    int async_pipe[2];               /**< Pipe for comunication with async event thread */
-    int async_comp_pipe[2];          /**< Pipe for async thread comunication with main thread */
-    pthread_t   async_thread;        /**< Async thread that will handle fatal errors */
+    opal_event_base_t *async_evbase; /**< Async event base */
     bool use_async_event_thread;     /**< Use the async event handler */
     mca_btl_openib_srq_manager_t srq_manager;     /**< Hash table for all BTL SRQs */
 #if BTL_OPENIB_FAILOVER_ENABLED
@@ -292,6 +295,9 @@ struct mca_btl_openib_component_t {
     char* default_recv_qps;
     /** GID index to use */
     int gid_index;
+    /*  Whether we want to allow connecting processes from different subnets.
+     *  set to 'no' by default */
+    bool allow_different_subnets;
     /** Whether we want a dynamically resizing srq, enabled by default */
     bool enable_srq_resize;
     bool allow_max_memory_registration;
@@ -300,11 +306,6 @@ struct mca_btl_openib_component_t {
     int ignore_locality;
 #if BTL_OPENIB_FAILOVER_ENABLED
     int verbose_failover;
-#endif
-#if BTL_OPENIB_MALLOC_HOOKS_ENABLED
-    int use_memalign;
-    size_t memalign_threshold;
-    void* (*previous_malloc_hook)(size_t __size, const void*);
 #endif
 #if OPAL_CUDA_SUPPORT
     bool cuda_async_send;
@@ -372,11 +373,15 @@ typedef struct mca_btl_openib_device_t {
 #endif
     opal_mutex_t device_lock;          /* device level lock */
     struct ibv_context *ib_dev_context;
+#if HAVE_DECL_IBV_EXP_QUERY_DEVICE
+    struct ibv_exp_device_attr ib_exp_dev_attr;
+#endif
     struct ibv_device_attr ib_dev_attr;
     struct ibv_pd *ib_pd;
     struct ibv_cq *ib_cq[2];
     uint32_t cq_size[2];
     mca_mpool_base_module_t *mpool;
+    mca_rcache_base_module_t *rcache;
     /* MTU for this device */
     uint32_t mtu;
     /* Whether this device supports eager RDMA */
@@ -407,9 +412,11 @@ typedef struct mca_btl_openib_device_t {
     /* Maximum value supported by this device for max_inline_data */
     uint32_t max_inline_data;
     /* Registration limit and current count */
-    uint64_t mem_reg_max, mem_reg_active;
+    uint64_t mem_reg_max, mem_reg_max_total, mem_reg_active;
     /* Device is ready for use */
     bool ready_for_use;
+    /* Async event */
+    opal_event_t async_event;
 } mca_btl_openib_device_t;
 OBJ_CLASS_DECLARATION(mca_btl_openib_device_t);
 
@@ -459,6 +466,7 @@ struct mca_btl_openib_module_t {
     mca_btl_base_module_t  super;
 
     bool btl_inited;
+    bool srqs_created;
 
     /** Common information about all ports */
     mca_btl_openib_modex_message_t port_info;
@@ -489,6 +497,8 @@ struct mca_btl_openib_module_t {
     mca_btl_openib_module_qp_t * qps;
 
     int local_procs;                   /** number of local procs */
+
+    bool atomic_ops_be;                /** atomic result is big endian */
 };
 typedef struct mca_btl_openib_module_t mca_btl_openib_module_t;
 
@@ -500,7 +510,7 @@ struct mca_btl_base_registration_handle_t {
 };
 
 struct mca_btl_openib_reg_t {
-    mca_mpool_base_registration_t base;
+    mca_rcache_base_registration_t base;
     struct ibv_mr *mr;
     mca_btl_base_registration_handle_t btl_handle;
 };
@@ -906,6 +916,15 @@ static inline int qp_cq_prio(const int qp)
 
 #define BTL_OPENIB_RDMA_QP(QP) \
     ((QP) == mca_btl_openib_component.rdma_qp)
+
+/**
+ * Run function as part of opal_progress()
+ *
+ * @param[in] fn    function to run
+ * @param[in] arg   function data
+ */
+int mca_btl_openib_run_in_main (void *(*fn)(void *), void *arg);
+
 
 END_C_DECLS
 

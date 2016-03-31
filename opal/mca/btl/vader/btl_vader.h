@@ -14,6 +14,8 @@
  * Copyright (c) 2009-2010 Cisco Systems, Inc.  All rights reserved.
  * Copyright (c) 2010-2015 Los Alamos National Security, LLC. All rights
  *                         reserved.
+ * Copyright (c) 2015      Mellanox Technologies. All rights reserved.
+ *
  * $COPYRIGHT$
  *
  * Additional copyrights may follow
@@ -45,8 +47,7 @@
 #include "opal/class/opal_free_list.h"
 #include "opal/sys/atomic.h"
 #include "opal/mca/btl/btl.h"
-#include "opal/mca/mpool/mpool.h"
-#include "opal/mca/mpool/base/base.h"
+#include "opal/mca/rcache/rcache.h"
 #include "opal/mca/btl/base/base.h"
 #include "opal/mca/rcache/rcache.h"
 #include "opal/mca/rcache/base/base.h"
@@ -150,6 +151,9 @@ struct mca_btl_vader_t {
     mca_btl_base_module_error_cb_fn_t error_cb;
 #if OPAL_BTL_VADER_HAVE_KNEM
     int knem_fd;
+
+    /* registration cache */
+    mca_rcache_base_module_t *knem_rcache;
 #endif
 };
 typedef struct mca_btl_vader_t mca_btl_vader_t;
@@ -262,6 +266,14 @@ int mca_btl_vader_get_knem (mca_btl_base_module_t *btl, mca_btl_base_endpoint_t 
 mca_btl_base_descriptor_t* mca_btl_vader_alloc (struct mca_btl_base_module_t* btl,
                                                 struct mca_btl_base_endpoint_t* endpoint,
                                                 uint8_t order, size_t size, uint32_t flags);
+
+/**
+ * Return a segment allocated by this BTL.
+ *
+ * @param btl (IN)      BTL module
+ * @param segment (IN)  Allocated segment.
+ */
+int mca_btl_vader_free (struct mca_btl_base_module_t *btl, mca_btl_base_descriptor_t *des);
 
 
 END_C_DECLS

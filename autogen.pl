@@ -1,12 +1,14 @@
 #!/usr/bin/env perl
 #
-# Copyright (c) 2009-2015 Cisco Systems, Inc.  All rights reserved.
+# Copyright (c) 2009-2016 Cisco Systems, Inc.  All rights reserved.
 # Copyright (c) 2010      Oracle and/or its affiliates.  All rights reserved.
 # Copyright (c) 2013      Mellanox Technologies, Inc.
 #                         All rights reserved.
 # Copyright (c) 2013-2014 Intel, Inc.  All rights reserved.
 # Copyright (c) 2015      Research Organization for Information Science
 #                         and Technology (RIST). All rights reserved.
+# Copyright (c) 2015      IBM Corporation.  All rights reserved.
+#
 # $COPYRIGHT$
 #
 # Additional copyrights may follow
@@ -52,6 +54,7 @@ my $help_arg = 0;
 my $platform_arg = 0;
 my $include_arg = 0;
 my $exclude_arg = 0;
+my $force_arg = 0;
 
 # Include/exclude lists
 my $include_list;
@@ -980,14 +983,27 @@ sub patch_autotools_output {
     push(@verbose_out, $indent_str . "Patching configure for IBM xlf libtool bug\n");
     $c =~ s/(\$LD -shared \$libobjs \$deplibs \$)compiler_flags( -soname \$soname)/$1linker_flags$2/g;
 
+    #Check if we are using a recent enough libtool that supports PowerPC little endian
+    if(index($c, 'powerpc64le-*linux*)') == -1) {
+        push(@verbose_out, $indent_str . "Patching configure for PowerPC little endian support\n");
+        my $replace_string = "x86_64-*kfreebsd*-gnu|x86_64-*linux*|powerpc*-*linux*|";
+        $c =~ s/x86_64-\*kfreebsd\*-gnu\|x86_64-\*linux\*\|ppc\*-\*linux\*\|powerpc\*-\*linux\*\|/$replace_string/g;
+        $replace_string =
+        "powerpc64le-*linux*)\n\t    LD=\"\${LD-ld} -m elf32lppclinux\"\n\t    ;;\n\t  powerpc64-*linux*)";
+        $c =~ s/ppc64-\*linux\*\|powerpc64-\*linux\*\)/$replace_string/g;
+        $replace_string =
+        "powerpcle-*linux*)\n\t    LD=\"\${LD-ld} -m elf64lppc\"\n\t    ;;\n\t  powerpc-*linux*)";
+        $c =~ s/ppc\*-\*linux\*\|powerpc\*-\*linux\*\)/$replace_string/g;
+    }
+
     # Fix consequence of broken libtool.m4
     # see http://lists.gnu.org/archive/html/bug-libtool/2015-07/msg00002.html and
     # https://github.com/open-mpi/ompi/issues/751
     push(@verbose_out, $indent_str . "Patching configure for libtool.m4 bug\n");
     # patch for libtool < 2.4.3
-    $c =~ s/# Some compilers place space between "-{L,R}" and the path.\n       # Remove the space.\n       if test \$p = \"-L\" \|\|/# Some compilers place space between "-{L,-l,R}" and the path.\n       # Remove the spaces.\n       if test \$p = \"-L\" \|\|\n          test \$p = \"-l\" \|\|/g;
+    $c =~ s/# Some compilers place space between "-\{L,R\}" and the path.\n       # Remove the space.\n       if test \$p = \"-L\" \|\|/# Some compilers place space between "-\{L,-l,R\}" and the path.\n       # Remove the spaces.\n       if test \$p = \"-L\" \|\|\n          test \$p = \"-l\" \|\|/g;
     # patch for libtool >= 2.4.3
-    $c =~ s/# Some compilers place space between "-{L,R}" and the path.\n       # Remove the space.\n       if test x-L = \"\$p\" \|\|\n          test x-R = \"\$p\"\; then/# Some compilers place space between "-{L,-l,R}" and the path.\n       # Remove the spaces.\n       if test x-L = \"x\$p\" \|\|\n          test x-l = \"x\$p\" \|\|\n          test x-R = \"x\$p\"\; then/g;
+    $c =~ s/# Some compilers place space between "-\{L,R\}" and the path.\n       # Remove the space.\n       if test x-L = \"\$p\" \|\|\n          test x-R = \"\$p\"\; then/# Some compilers place space between "-\{L,-l,R\}" and the path.\n       # Remove the spaces.\n       if test x-L = \"x\$p\" \|\|\n          test x-l = \"x\$p\" \|\|\n          test x-R = \"x\$p\"\; then/g;
 
     # Only write out verbose statements and a new configure if the
     # configure content actually changed
@@ -1003,6 +1019,24 @@ sub patch_autotools_output {
     # Use cp so that we preserve permissions on configure
     safe_system("cp configure.patched configure");
     unlink("configure.patched");
+}
+
+sub in_tarball {
+    my $tarball = 0;
+    open(IN, "VERSION") || my_die "Can't open VERSION";
+    # If repo_rev is not an empty string, we are in a tarball
+    while (<IN>) {
+          my $line = $_;
+          my @fields = split(/=/,$line);
+          if ($fields[0] eq "repo_rev") {
+              if ($fields[1] ne "\n") {
+                  $tarball = 1;
+                  last;
+              }
+          }
+    }
+    close(IN);
+    return $tarball;
 }
 
 ##############################################################################
@@ -1022,6 +1056,7 @@ my $ok = Getopt::Long::GetOptions("no-ompi" => \$no_ompi_arg,
                                   "platform=s" => \$platform_arg,
                                   "include=s" => \$include_arg,
                                   "exclude=s" => \$exclude_arg,
+                                  "force|f" => \$force_arg,
     );
 
 if (!$ok || $help_arg) {
@@ -1041,7 +1076,9 @@ if (!$ok || $help_arg) {
                                 will be ignored and only those specified will be marked
                                 to build
   --exclude | -e                Comma-separated list of framework or framework-component
-                                to be excluded from the build\n";
+                                to be excluded from the build
+  --force | -f                  Run even if invoked from the source tree of an expanded
+                                distribution tarball\n";
     my_exit($ok ? 0 : 1);
 }
 
@@ -1104,6 +1141,11 @@ $dnl_line\n\n";
 
 my_die "Not at the root directory of an OMPI source tree"
     if (! -f "config/opal_try_assemble.m4");
+
+my_die "autogen.pl has been invoked in the source tree of an Open MPI distribution tarball; aborting...
+You likely do not need to invoke \"autogen.pl\" -- you can probably run \"configure\" directly.
+If you really know what you are doing, and really need to run autogen.pl, use the \"--force\" flag."
+    if (!$force_arg && in_tarball());
 
 # Now that we've verified that we're in the top-level OMPI directory,
 # set the sentinel file to remove if we abort.

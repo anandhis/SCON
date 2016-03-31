@@ -11,8 +11,8 @@
  *                         All rights reserved.
  * Copyright (c) 2007-2012 Los Alamos National Security, LLC.  All rights
  *                         reserved.
- * Copyright (c) 2009-2011 Cisco Systems, Inc.  All rights reserved.
- * Copyright (c) 2014-2015 Intel, Inc. All rights reserved.
+ * Copyright (c) 2009-2016 Cisco Systems, Inc.  All rights reserved.
+ * Copyright (c) 2014-2016 Intel, Inc. All rights reserved.
  * $COPYRIGHT$
  *
  * Additional copyrights may follow
@@ -104,7 +104,7 @@ BEGIN_C_DECLS
 #define ORTE_RML_TAG_COLL_RELEASE           31
 #define ORTE_RML_TAG_DAEMON_COLL            32
 #define ORTE_RML_TAG_ALLGATHER_DIRECT       33
-#define ORTE_RML_TAG_ALLGATHER_BRKS         34
+#define ORTE_RML_TAG_ALLGATHER_BRUCKS       34
 #define ORTE_RML_TAG_ALLGATHER_RCD          35
 
 /* show help */
@@ -151,7 +151,7 @@ BEGIN_C_DECLS
 
 /* notifier support */
 #define ORTE_RML_TAG_NOTIFIER_HNP           52
-#define ORTE_RML_TAG_CONFIRM_SPAWN          53
+#define ORTE_RML_TAG_NOTIFY_COMPLETE        53
 
 /*** QOS specific  RML TAGS ***/
 #define ORTE_RML_TAG_OPEN_CHANNEL_REQ       54
@@ -159,8 +159,11 @@ BEGIN_C_DECLS
 #define ORTE_RML_TAG_MSG_ACK                56
 #define ORTE_RML_TAG_CLOSE_CHANNEL_REQ      57
 #define ORTE_RML_TAG_CLOSE_CHANNEL_ACCEPT   58
-#define ORTE_RML_TAG_MAX                   100
 
+/* error notifications */
+#define ORTE_RML_TAG_NOTIFICATION           59
+
+#define ORTE_RML_TAG_MAX                   100
 
 #define ORTE_RML_TAG_NTOH(t) ntohl(t)
 #define ORTE_RML_TAG_HTON(t) htonl(t)

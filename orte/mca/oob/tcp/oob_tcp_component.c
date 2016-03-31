@@ -14,7 +14,7 @@
  *                         reserved.
  * Copyright (c) 2009-2015 Cisco Systems, Inc.  All rights reserved.
  * Copyright (c) 2011      Oak Ridge National Labs.  All rights reserved.
- * Copyright (c) 2013-2015 Intel, Inc.  All rights reserved.
+ * Copyright (c) 2013-2016 Intel, Inc.  All rights reserved.
  * Copyright (c) 2014      NVIDIA Corporation.  All rights reserved.
  * Copyright (c) 2015      Research Organization for Information Science
  *                         and Technology (RIST). All rights reserved.
@@ -704,9 +704,9 @@ static void component_shutdown(void)
 static int component_send(orte_rml_send_t *msg)
 {
     opal_output_verbose(5, orte_oob_base_framework.framework_output,
-                        "%s oob:tcp:send_nb to peer %s:%d to channel=%d seq = %d",
+                        "%s oob:tcp:send_nb to peer %s:%d seq = %d",
                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
-                        ORTE_NAME_PRINT(&msg->dst), msg->tag,msg->dst_channel, msg->seq_num );
+                        ORTE_NAME_PRINT(&msg->dst), msg->tag, msg->seq_num );
 
     /* the module is potentially running on its own event
      * base, so all it can do is push our send request
@@ -970,11 +970,6 @@ void mca_oob_tcp_component_lost_connection(int fd, short args, void *cbdata)
                         ORTE_NAME_PRINT(ORTE_PROC_MY_NAME),
                         ORTE_NAME_PRINT(&pop->peer));
 
-    /* if we are terminating, or recovery isn't enabled, then don't attempt to reconnect */
-    if (!orte_enable_recovery || orte_orteds_term_ordered || orte_finalizing || orte_abnormal_term_ordered) {
-        goto cleanup;
-    }
-
     /* Mark that we no longer support this peer */
     memcpy(&ui64, (char*)&pop->peer, sizeof(uint64_t));
     if (OPAL_SUCCESS != opal_hash_table_get_value_uint64(&orte_oob_base.peers,
@@ -982,19 +977,19 @@ void mca_oob_tcp_component_lost_connection(int fd, short args, void *cbdata)
         bpr = OBJ_NEW(orte_oob_base_peer_t);
     }
     opal_bitmap_clear_bit(&bpr->addressable, mca_oob_tcp_component.super.idx);
-   if (OPAL_SUCCESS != (rc = opal_hash_table_set_value_uint64(&orte_oob_base.peers,
+    if (OPAL_SUCCESS != (rc = opal_hash_table_set_value_uint64(&orte_oob_base.peers,
                                                                ui64, NULL))) {
         ORTE_ERROR_LOG(rc);
     }
 
- cleanup:
-    /* activate the proc state */
-    if (ORTE_SUCCESS != orte_routed.route_lost(&pop->peer)) {
-        ORTE_ACTIVATE_PROC_STATE(&pop->peer, ORTE_PROC_STATE_LIFELINE_LOST);
-    } else {
-        ORTE_ACTIVATE_PROC_STATE(&pop->peer, ORTE_PROC_STATE_COMM_FAILED);
+    if (!orte_finalizing) {
+        /* activate the proc state */
+        if (ORTE_SUCCESS != orte_routed.route_lost(&pop->peer)) {
+            ORTE_ACTIVATE_PROC_STATE(&pop->peer, ORTE_PROC_STATE_LIFELINE_LOST);
+        } else {
+            ORTE_ACTIVATE_PROC_STATE(&pop->peer, ORTE_PROC_STATE_COMM_FAILED);
+        }
     }
-
     OBJ_RELEASE(pop);
 }
 
@@ -1098,7 +1093,6 @@ void mca_oob_tcp_component_hop_unknown(int fd, short args, void *cbdata)
     snd->dst = mop->snd->hdr.dst;
     snd->origin = mop->snd->hdr.origin;
     snd->tag = mop->snd->hdr.tag;
-    snd->dst_channel = mop->snd->hdr.channel;
     snd->seq_num = mop->snd->hdr.seq_num;
     snd->data = mop->snd->data;
     snd->count = mop->snd->hdr.nbytes;

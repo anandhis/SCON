@@ -23,10 +23,6 @@
  *
  * $HEADER$
  */
-/**
- * @file
- * Description of the Registration Cache framework
- */
 
 #include "opal_config.h"
 
@@ -182,6 +178,9 @@ void mca_mpool_base_tree_print(int show_up_to_mem_leaks)
     num_leaks = 0;
     max_mem_leaks = show_up_to_mem_leaks;
     opal_rb_tree_traverse(&mca_mpool_base_tree, condition, action);
+    if (0 == num_leaks) {
+        return;
+    }
 
     if (num_leaks <= show_up_to_mem_leaks ||
         show_up_to_mem_leaks < 0) {

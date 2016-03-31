@@ -12,7 +12,7 @@
  *                         All rights reserved.
  * Copyright (c) 2010      Oracle and/or its affiliates.  All rights reserved.
  * Copyright (c) 2011      Cisco Systems, Inc.  All rights reserved.
- * Copyright (c) 2013-2015 Intel, Inc.  All rights reserved.
+ * Copyright (c) 2013-2016 Intel, Inc.  All rights reserved.
  * Copyright (c) 2015      Los Alamos National Security, LLC. All rights
  *                         reserved.
  * $COPYRIGHT$
@@ -40,6 +40,7 @@
 #include "opal/util/argv.h"
 #include "opal/util/opal_environ.h"
 #include "opal/util/path.h"
+#include "opal/runtime/opal_progress_threads.h"
 #include "opal/mca/installdirs/installdirs.h"
 #include "opal/mca/pmix/base/base.h"
 #include "opal/mca/pmix/pmix.h"
@@ -74,6 +75,7 @@ static bool added_num_procs = false;
 static bool added_app_ctx = false;
 static bool added_pmix_envs = false;
 static char *pmixenvars[4];
+static bool progress_thread_running = false;
 
 static int fork_hnp(void);
 
@@ -97,19 +99,19 @@ static int rte_init(void)
     u32ptr = &u32;
     u16ptr = &u16;
 
-    if (NULL != orte_ess_singleton_server_uri) {
+    if (NULL != mca_ess_singleton_component.server_uri) {
         /* we are going to connect to a server HNP */
-        if (0 == strncmp(orte_ess_singleton_server_uri, "file", strlen("file")) ||
-            0 == strncmp(orte_ess_singleton_server_uri, "FILE", strlen("FILE"))) {
+        if (0 == strncmp(mca_ess_singleton_component.server_uri, "file", strlen("file")) ||
+            0 == strncmp(mca_ess_singleton_component.server_uri, "FILE", strlen("FILE"))) {
             char input[1024], *filename;
             FILE *fp;
 
             /* it is a file - get the filename */
-            filename = strchr(orte_ess_singleton_server_uri, ':');
+            filename = strchr(mca_ess_singleton_component.server_uri, ':');
             if (NULL == filename) {
                 /* filename is not correctly formatted */
                 orte_show_help("help-orterun.txt", "orterun:ompi-server-filename-bad", true,
-                               "singleton", orte_ess_singleton_server_uri);
+                               "singleton", mca_ess_singleton_component.server_uri);
                 return ORTE_ERROR;
             }
             ++filename; /* space past the : */
@@ -117,7 +119,7 @@ static int rte_init(void)
             if (0 >= strlen(filename)) {
                 /* they forgot to give us the name! */
                 orte_show_help("help-orterun.txt", "orterun:ompi-server-filename-missing", true,
-                               "singleton", orte_ess_singleton_server_uri);
+                               "singleton", mca_ess_singleton_component.server_uri);
                 return ORTE_ERROR;
             }
 
@@ -125,7 +127,7 @@ static int rte_init(void)
             fp = fopen(filename, "r");
             if (NULL == fp) { /* can't find or read file! */
                 orte_show_help("help-orterun.txt", "orterun:ompi-server-filename-access", true,
-                               "singleton", orte_ess_singleton_server_uri);
+                               "singleton", mca_ess_singleton_component.server_uri);
                 return ORTE_ERROR;
             }
             memset(input, 0, 1024);  // initialize the array to ensure a NULL termination
@@ -133,14 +135,14 @@ static int rte_init(void)
                 /* something malformed about file */
                 fclose(fp);
                 orte_show_help("help-orterun.txt", "orterun:ompi-server-file-bad", true,
-                               "singleton", orte_ess_singleton_server_uri, "singleton");
+                               "singleton", mca_ess_singleton_component.server_uri, "singleton");
                 return ORTE_ERROR;
             }
             fclose(fp);
             input[strlen(input)-1] = '\0';  /* remove newline */
             orte_process_info.my_hnp_uri = strdup(input);
         } else {
-            orte_process_info.my_hnp_uri = strdup(orte_ess_singleton_server_uri);
+            orte_process_info.my_hnp_uri = strdup(mca_ess_singleton_component.server_uri);
         }
         /* save the daemon uri - we will process it later */
         orte_process_info.my_daemon_uri = strdup(orte_process_info.my_hnp_uri);
@@ -154,7 +156,11 @@ static int rte_init(void)
         ORTE_PROC_MY_NAME->vpid = 0;
 
         /* for convenience, push the pubsub version of this param into the environ */
-        opal_setenv (OPAL_MCA_PREFIX"pubsub_orte_server", orte_process_info.my_hnp_uri, 1, &environ);
+        opal_setenv (OPAL_MCA_PREFIX"pubsub_orte_server", orte_process_info.my_hnp_uri, true, &environ);
+    } else if (NULL != getenv("SINGULARITY_CONTAINER") ||
+               mca_ess_singleton_component.isolated) {
+        /* ensure we use the isolated pmix component */
+        opal_setenv (OPAL_MCA_PREFIX"pmix", "isolated", true, &environ);
     } else {
         /* spawn our very own HNP to support us */
         if (ORTE_SUCCESS != (rc = fork_hnp())) {
@@ -162,21 +168,30 @@ static int rte_init(void)
             return rc;
         }
         /* our name was given to us by the HNP */
+        opal_setenv (OPAL_MCA_PREFIX"pmix", "^s1,s2,cray,isolated", true, &environ);
     }
 
+    /* get an async event base - we use the opal_async one so
+     * we don't startup extra threads if not needed */
+    orte_event_base = opal_progress_thread_init(NULL);
+    progress_thread_running = true;
+
     /* open and setup pmix */
-    if (OPAL_SUCCESS != (rc = mca_base_framework_open(&opal_pmix_base_framework, 0))) {
-        ORTE_ERROR_LOG(rc);
-        return rc;
+    if (OPAL_SUCCESS != (ret = mca_base_framework_open(&opal_pmix_base_framework, 0))) {
+        error = "opening pmix";
+        goto error;
     }
-    if (OPAL_SUCCESS != (rc = opal_pmix_base_select())) {
-        ORTE_ERROR_LOG(rc);
-        return rc;
+    if (OPAL_SUCCESS != (ret = opal_pmix_base_select())) {
+        error = "select pmix";
+        goto error;
     }
+    /* set the event base */
+    opal_pmix_base_set_evbase(orte_event_base);
     /* initialize the selected module */
-    if (OPAL_SUCCESS != (rc = opal_pmix.init())) {
-        ORTE_ERROR_LOG(rc);
-        return rc;
+    if (!opal_pmix.initialized() && (OPAL_SUCCESS != (ret = opal_pmix.init()))) {
+        /* we cannot run */
+        error = "pmix init";
+        goto error;
     }
 
     /* pmix.init set our process name down in the OPAL layer,
@@ -363,17 +378,22 @@ static int rte_finalize(void)
         unsetenv("PMIX_SERVER_URI");
         unsetenv("PMIX_SECURITY_MODE");
     }
+    /* use the default procedure to finish */
+    if (ORTE_SUCCESS != (ret = orte_ess_base_app_finalize())) {
+        ORTE_ERROR_LOG(ret);
+    }
+
     /* mark us as finalized */
     if (NULL != opal_pmix.finalize) {
         opal_pmix.finalize();
         (void) mca_base_framework_close(&opal_pmix_base_framework);
     }
 
-    /* use the default procedure to finish */
-    if (ORTE_SUCCESS != (ret = orte_ess_base_app_finalize())) {
-        ORTE_ERROR_LOG(ret);
+    /* release the event base */
+    if (progress_thread_running) {
+        opal_progress_thread_finalize(NULL);
+        progress_thread_running = false;
     }
-
     return ret;
 }
 
@@ -479,6 +499,16 @@ static int fork_hnp(void)
     opal_argv_append(&argc, &argv, "-"OPAL_MCA_CMD_LINE_ID);
     opal_argv_append(&argc, &argv, "state_novm_select");
     opal_argv_append(&argc, &argv, "1");
+
+    /* direct the selection of the ess component */
+    opal_argv_append(&argc, &argv, "-"OPAL_MCA_CMD_LINE_ID);
+    opal_argv_append(&argc, &argv, "ess");
+    opal_argv_append(&argc, &argv, "hnp");
+
+    /* direct the selection of the pmix component */
+    opal_argv_append(&argc, &argv, "-"OPAL_MCA_CMD_LINE_ID);
+    opal_argv_append(&argc, &argv, "pmix");
+    opal_argv_append(&argc, &argv, "^s1,s2,cray,isolated");
 
     /* Fork off the child */
     orte_process_info.hnp_pid = fork();

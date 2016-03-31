@@ -316,9 +316,12 @@ int btl_openib_register_mca_params(void)
                   "(must be >= 1)",
                   32, &mca_btl_openib_component.ib_free_list_inc,
                   REGINT_GE_ONE));
-    CHECK(reg_string("mpool", NULL,
-                     "Name of the memory pool to be used (it is unlikely that you will ever want to change this)",
-                     "grdma", &mca_btl_openib_component.ib_mpool_name,
+    CHECK(reg_string("mpool_hints", NULL, "hints for selecting a memory pool (default: none)",
+                     NULL, &mca_btl_openib_component.ib_mpool_hints,
+                     0));
+    CHECK(reg_string("rcache", NULL,
+                     "Name of the registration cache to be used (it is unlikely that you will ever want to change this)",
+                     "grdma", &mca_btl_openib_component.ib_rcache_name,
                      0));
     CHECK(reg_int("reg_mru_len", NULL,
                   "Length of the registration cache most recently used list "
@@ -663,7 +666,7 @@ int btl_openib_register_mca_params(void)
     }
 
     asprintf(&default_qps,
-            "P,128,256,192,128:S,%u,1024,1008,64:S,%u,1024,1008,64:S,%u,1024,1008,64",
+            "S,128,256,192,128:S,%u,1024,1008,64:S,%u,1024,1008,64:S,%u,1024,1008,64",
             mid_qp_size,
             (uint32_t)mca_btl_openib_module.super.btl_eager_limit,
             (uint32_t)mca_btl_openib_module.super.btl_max_send_size);
@@ -703,26 +706,24 @@ int btl_openib_register_mca_params(void)
                   0, &mca_btl_openib_component.gid_index,
                   REGINT_GE_ZERO));
 
-#if BTL_OPENIB_MALLOC_HOOKS_ENABLED
-    CHECK(reg_int("memalign", NULL,
-                  "[64 | 32 | 0] - Enable (64bit or 32bit)/Disable(0) memory"
-                  "alignment for all malloc calls if btl openib is used.",
-                  32, &mca_btl_openib_component.use_memalign,
-                  REGINT_GE_ZERO));
+    CHECK(reg_bool("allow_different_subnets", NULL,
+                   "Allow connecting processes from different IB subnets."
+                   "(0 = do not allow; 1 = allow)",
+                   false, &mca_btl_openib_component.allow_different_subnets));
 
-    mca_btl_openib_component.memalign_threshold =
-        mca_btl_openib_module.super.btl_eager_limit;
-    tmp = mca_base_component_var_register(&mca_btl_openib_component.super.btl_version,
-                                          "memalign_threshold",
-                                          "Allocating memory more than btl_openib_memalign_threshhold"
-                                          "bytes will automatically be algined to the value of btl_openib_memalign bytes."
-                                          "memalign_threshhold defaults to the same value as mca_btl_openib_eager_limit.",
-                                          MCA_BASE_VAR_TYPE_SIZE_T, NULL, 0, 0,
-                                          OPAL_INFO_LVL_9,
-                                          MCA_BASE_VAR_SCOPE_READONLY,
-                                          &mca_btl_openib_component.memalign_threshold);
-    if (0 > tmp) ret = tmp;
-#endif
+#if MEMORY_LINUX_MALLOC_ALIGN_ENABLED
+    tmp = mca_base_var_find ("opal", "memory", "linux", "memalign");
+    if (0 <= tmp) {
+        (void) mca_base_var_register_synonym(tmp, "opal", "btl", "openib", "memalign",
+                                             MCA_BASE_VAR_SYN_FLAG_DEPRECATED);
+    }
+
+    tmp = mca_base_var_find ("opal", "memory", "linux", "memalign_threshold");
+    if (0 <= tmp) {
+        (void) mca_base_var_register_synonym(tmp, "opal", "btl", "openib", "memalign_threshold",
+                                             MCA_BASE_VAR_SYN_FLAG_DEPRECATED);
+    }
+#endif /* MEMORY_LINUX_MALLOC_ALIGN_ENABLED */
 
     /* Register any MCA params for the connect pseudo-components */
     if (OPAL_SUCCESS == ret) {
@@ -820,17 +821,6 @@ int btl_openib_verify_mca_params (void)
         opal_show_help("help-mpi-btl-openib.txt", "do_not_set_openib_value",
                        true, opal_process_info.nodename);
         mca_btl_openib_module.super.btl_cuda_max_send_size = 0;
-    }
-#endif
-
-#if BTL_OPENIB_MALLOC_HOOKS_ENABLED
-    if (mca_btl_openib_component.use_memalign != 32
-        && mca_btl_openib_component.use_memalign != 64
-        && mca_btl_openib_component.use_memalign != 0){
-        opal_show_help("help-mpi-btl-openib.txt", "invalid mca param value",
-                       true, "Wrong btl_openib_memalign parameter value. Allowed values: 64, 32, 0.",
-                       "btl_openib_memalign is reset to 32");
-        mca_btl_openib_component.use_memalign = 32;
     }
 #endif
 

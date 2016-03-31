@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014      Intel, Inc. All rights reserved
+ * Copyright (c) 2014-2016 Intel, Inc. All rights reserved
  * Copyright (c) 2014      Research Organization for Information Science
  *                         and Technology (RIST). All rights reserved.
  * $COPYRIGHT$
@@ -167,6 +167,8 @@ const char *orte_attr_key_to_str(orte_attribute_key_t key)
             return "APP-MAX-PPN";
         case ORTE_APP_PREFIX_DIR:
             return "APP-PREFIX-DIR";
+        case ORTE_APP_NO_CACHEDIR:
+            return "ORTE_APP_NO_CACHEDIR";
 
         case ORTE_NODE_USERNAME:
             return "NODE-USERNAME";
@@ -261,6 +263,20 @@ const char *orte_attr_key_to_str(orte_attribute_key_t key)
             return "JOB-LAUNCH-PROXY";
         case ORTE_JOB_NSPACE_REGISTERED:
             return "JOB-NSPACE-REGISTERED";
+        case ORTE_JOB_FIXED_DVM:
+            return "ORTE-JOB-FIXED-DVM";
+        case ORTE_JOB_DVM_JOB:
+            return "ORTE-JOB-DVM-JOB";
+        case ORTE_JOB_CANCELLED:
+            return "ORTE-JOB-CANCELLED";
+        case ORTE_JOB_OUTPUT_TO_FILE:
+            return "ORTE-JOB-OUTPUT-TO-FILE";
+        case ORTE_JOB_MERGE_STDERR_STDOUT:
+            return "ORTE-JOB-MERGE-STDERR-STDOUT";
+        case ORTE_JOB_TAG_OUTPUT:
+            return "ORTE-JOB-TAG-OUTPUT";
+        case ORTE_JOB_TIMESTAMP_OUTPUT:
+            return "ORTE-JOB-TIMESTAMP-OUTPUT";
 
         case ORTE_PROC_NOBARRIER:
             return "PROC-NOBARRIER";

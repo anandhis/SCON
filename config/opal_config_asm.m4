@@ -13,6 +13,8 @@ dnl Copyright (c) 2008-2015 Cisco Systems, Inc.  All rights reserved.
 dnl Copyright (c) 2010      Oracle and/or its affiliates.  All rights reserved.
 dnl Copyright (c) 2015      Research Organization for Information Science
 dnl                         and Technology (RIST). All rights reserved.
+dnl Copyright (c) 2014-2016 Los Alamos National Security, LLC. All rights
+dnl                         reserved.
 dnl $COPYRIGHT$
 dnl
 dnl Additional copyrights may follow
@@ -86,7 +88,7 @@ AC_DEFUN([OPAL_CHECK_SYNC_BUILTIN_CSWAP_INT128], [
 AC_DEFUN([OPAL_CHECK_SYNC_BUILTINS], [
   AC_MSG_CHECKING([for __sync builtin atomics])
 
-  AC_TRY_COMPILE([], [__sync_synchronize()],
+  AC_TRY_LINK([], [__sync_synchronize()],
     [AC_MSG_RESULT([yes])
      $1],
     [AC_MSG_RESULT([no])
@@ -872,15 +874,13 @@ AC_DEFUN([OPAL_CONFIG_ASM],[
          [], [enable_osx_builtin_atomics="yes"])
 
     opal_cv_asm_builtin="BUILTIN_NO"
-    if test "$opal_cv_asm_builtin" = "BUILTIN_NO" -a "$enable_builtin_atomics" = "yes" ; then
+    if test "$opal_cv_asm_builtin" = "BUILTIN_NO" && test "$enable_builtin_atomics" = "yes" ; then
        OPAL_CHECK_SYNC_BUILTINS([opal_cv_asm_builtin="BUILTIN_SYNC"], [])
        OPAL_CHECK_SYNC_BUILTIN_CSWAP_INT128
     fi
-    if test "$opal_cv_asm_builtin" = "BUILTIN_NO" -a "$enable_osx_builtin_atomics" = "yes" ; then
+    if test "$opal_cv_asm_builtin" = "BUILTIN_NO" && test "$enable_osx_builtin_atomics" = "yes" ; then
        AC_CHECK_HEADER([libkern/OSAtomic.h],
                        [opal_cv_asm_builtin="BUILTIN_OSX"])
-    else
-       opal_cv_asm_builtin="BUILTIN_NO"
     fi
 
         OPAL_CHECK_ASM_PROC

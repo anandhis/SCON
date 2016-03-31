@@ -19,12 +19,11 @@
 #include <unistd.h>
 
 #include "opal/util/show_help.h"
-#include "opal/mca/mpool/grdma/mpool_grdma.h"
 
-OBJ_CLASS_INSTANCE(mca_btl_vader_registration_handle_t, mca_mpool_base_registration_t, NULL, NULL);
+OBJ_CLASS_INSTANCE(mca_btl_vader_registration_handle_t, mca_rcache_base_registration_t, NULL, NULL);
 
 static int mca_btl_vader_knem_reg (void *reg_data, void *base, size_t size,
-                                   mca_mpool_base_registration_t *reg)
+                                   mca_rcache_base_registration_t *reg)
 {
     mca_btl_vader_registration_handle_t *knem_reg = (mca_btl_vader_registration_handle_t *) reg;
     struct knem_cmd_create_region knem_cr;
@@ -35,8 +34,15 @@ static int mca_btl_vader_knem_reg (void *reg_data, void *base, size_t size,
 
     knem_cr.iovec_array = (uintptr_t) &knem_iov;
     knem_cr.iovec_nr = 1;
-    /* TODO -- set proper access flags when the protection is passed down */
-    knem_cr.protection = PROT_READ | PROT_WRITE;
+    knem_cr.protection = 0;
+
+    if (reg->access_flags & (MCA_RCACHE_ACCESS_LOCAL_WRITE | MCA_RCACHE_ACCESS_REMOTE_WRITE)) {
+        knem_cr.protection |= PROT_WRITE;
+    }
+
+    if (reg->access_flags & MCA_RCACHE_ACCESS_REMOTE_READ) {
+        knem_cr.protection |= PROT_READ;
+    }
 
     /* Vader will explicitly destroy this cookie */
     knem_cr.flags = 0;
@@ -50,7 +56,7 @@ static int mca_btl_vader_knem_reg (void *reg_data, void *base, size_t size,
     return OPAL_SUCCESS;
 }
 
-static int mca_btl_vader_knem_dereg (void *reg_data, mca_mpool_base_registration_t *reg)
+static int mca_btl_vader_knem_dereg (void *reg_data, mca_rcache_base_registration_t *reg)
 {
     mca_btl_vader_registration_handle_t *knem_reg = (mca_btl_vader_registration_handle_t *) reg;
 
@@ -65,11 +71,14 @@ mca_btl_vader_register_mem_knem (struct mca_btl_base_module_t* btl,
                                  struct mca_btl_base_endpoint_t *endpoint,
                                  void *base, size_t size, uint32_t flags)
 {
+    mca_btl_vader_t *vader_module = (mca_btl_vader_t *) btl;
     mca_btl_vader_registration_handle_t *reg = NULL;
+    int access_flags = flags & MCA_BTL_REG_FLAG_ACCESS_ANY;
     int rc;
 
-    rc = btl->btl_mpool->mpool_register (btl->btl_mpool, base, size, 0,
-                                         (mca_mpool_base_registration_t **) &reg);
+    rc = vader_module->knem_rcache->rcache_register (vader_module->knem_rcache, base, size, 0,
+                                                     access_flags,
+                                                     (mca_rcache_base_registration_t **) &reg);
     if (OPAL_UNLIKELY(OPAL_SUCCESS != rc)) {
         return NULL;
     }
@@ -80,18 +89,19 @@ mca_btl_vader_register_mem_knem (struct mca_btl_base_module_t* btl,
 static int
 mca_btl_vader_deregister_mem_knem (struct mca_btl_base_module_t *btl, struct mca_btl_base_registration_handle_t *handle)
 {
+    mca_btl_vader_t *vader_module = (mca_btl_vader_t *) btl;
     mca_btl_vader_registration_handle_t *reg =
         (mca_btl_vader_registration_handle_t *)((intptr_t) handle - offsetof (mca_btl_vader_registration_handle_t, btl_handle));
 
-    btl->btl_mpool->mpool_deregister (btl->btl_mpool, &reg->base);
+    vader_module->knem_rcache->rcache_deregister (vader_module->knem_rcache, &reg->base);
 
     return OPAL_SUCCESS;
 }
 
 int mca_btl_vader_knem_init (void)
 {
-    mca_mpool_base_resources_t mpool_resources = {
-        .pool_name = "vader", .reg_data = NULL,
+    mca_rcache_base_resources_t rcache_resources = {
+        .cache_name = "vader", .reg_data = NULL,
         .sizeof_reg = sizeof (mca_btl_vader_registration_handle_t),
         .register_mem = mca_btl_vader_knem_reg,
         .deregister_mem = mca_btl_vader_knem_dereg
@@ -99,6 +109,7 @@ int mca_btl_vader_knem_init (void)
     struct knem_cmd_info knem_info;
     int rc;
 
+    signal (SIGSEGV, SIG_DFL);
     /* Open the knem device.  Try to print a helpful message if we
        fail to open it. */
     mca_btl_vader.knem_fd = open("/dev/knem", O_RDWR);
@@ -122,6 +133,7 @@ int mca_btl_vader_knem_init (void)
     do {
 	/* Check that the ABI if kernel module running is the same
 	 * as what we were compiled against. */
+        memset (&knem_info, 0, sizeof (knem_info));
 	rc = ioctl(mca_btl_vader.knem_fd, KNEM_CMD_GET_INFO, &knem_info);
 	if (rc < 0) {
 	    opal_show_help("help-btl-vader.txt", "knem get ABI fail",
@@ -153,9 +165,9 @@ int mca_btl_vader_knem_init (void)
         mca_btl_vader.super.btl_deregister_mem = mca_btl_vader_deregister_mem_knem;
         mca_btl_vader.super.btl_registration_handle_size = sizeof (mca_btl_base_registration_handle_t);
 
-        mca_btl_vader.super.btl_mpool = mca_mpool_base_module_create ("grdma", NULL,
-                                                                      &mpool_resources);
-        if (NULL == mca_btl_vader.super.btl_mpool) {
+        mca_btl_vader.knem_rcache = mca_rcache_base_module_create ("grdma", NULL,
+                                                                   &rcache_resources);
+        if (NULL == mca_btl_vader.knem_rcache) {
             return OPAL_ERR_OUT_OF_RESOURCE;
         }
 
@@ -174,9 +186,9 @@ int mca_btl_vader_knem_fini (void)
 	mca_btl_vader.knem_fd = -1;
     }
 
-    if (mca_btl_vader.super.btl_mpool) {
-        (void) mca_mpool_base_module_destroy (mca_btl_vader.super.btl_mpool);
-        mca_btl_vader.super.btl_mpool = NULL;
+    if (mca_btl_vader.knem_rcache) {
+        (void) mca_rcache_base_module_destroy (mca_btl_vader.knem_rcache);
+        mca_btl_vader.knem_rcache = NULL;
     }
 
     return OPAL_SUCCESS;

@@ -1,3 +1,4 @@
+/* -*- Mode: C; c-basic-offset:4 ; indent-tabs-mode:nil -*- */
 /*
  * Copyright (c) 2004-2008 The Trustees of Indiana University and Indiana
  *                         University Research and Technology
@@ -11,7 +12,9 @@
  *                         All rights reserved.
  * Copyright (c) 2006      Sandia National Laboratories. All rights
  *                         reserved.
- * Copyright (c) 2011-2015 Cisco Systems, Inc.  All rights reserved.
+ * Copyright (c) 2011-2016 Cisco Systems, Inc.  All rights reserved.
+ * Copyright (c) 2015-2016 Los Alamos National Security, LLC. All rights
+ *                         reserved.
  * $COPYRIGHT$
  *
  * Additional copyrights may follow
@@ -110,6 +113,8 @@ typedef struct opal_btl_usnic_module_t {
     struct fid_eq *av_eq;
     struct fid_av *av;
 
+    size_t av_eq_size;
+
     mca_btl_base_module_error_cb_fn_t pml_error_callback;
 
     /* Information about the events */
@@ -127,6 +132,7 @@ typedef struct opal_btl_usnic_module_t {
     int sd_num;
     int rd_num;
     int cq_num;
+    int av_eq_num;
     int prio_sd_num;
     int prio_rd_num;
 
@@ -194,6 +200,9 @@ typedef struct opal_btl_usnic_module_t {
 
     /* Performance / debugging statistics */
     opal_btl_usnic_module_stats_t stats;
+
+    /** registration cache module (v2.1+) */
+    mca_rcache_base_module_t *rcache;
 } opal_btl_usnic_module_t;
 
 struct opal_btl_usnic_frag_t;

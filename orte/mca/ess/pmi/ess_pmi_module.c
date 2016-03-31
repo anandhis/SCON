@@ -12,7 +12,7 @@
  * Copyright (c) 2008-2012 Cisco Systems, Inc.  All rights reserved.
  * Copyright (c) 2012-2013 Los Alamos National Security, LLC.
  *                         All rights reserved.
- * Copyright (c) 2013-2015 Intel, Inc.  All rights reserved.
+ * Copyright (c) 2013-2016 Intel, Inc.  All rights reserved.
  * $COPYRIGHT$
  *
  * Additional copyrights may follow
@@ -39,6 +39,7 @@
 #include "opal/util/opal_environ.h"
 #include "opal/util/output.h"
 #include "opal/util/argv.h"
+#include "opal/runtime/opal_progress_threads.h"
 #include "opal/class/opal_pointer_array.h"
 #include "opal/mca/hwloc/base/base.h"
 #include "opal/util/printf.h"
@@ -47,6 +48,8 @@
 #include "opal/mca/pmix/base/base.h"
 
 #include "orte/mca/errmgr/errmgr.h"
+#include "orte/mca/grpcomm/grpcomm.h"
+#include "orte/mca/rml/rml.h"
 #include "orte/util/proc_info.h"
 #include "orte/util/show_help.h"
 #include "orte/util/name_fns.h"
@@ -73,6 +76,7 @@ orte_ess_base_module_t orte_ess_pmi_module = {
 static bool added_transport_keys=false;
 static bool added_num_procs = false;
 static bool added_app_ctx = false;
+static bool progress_thread_running = false;
 
 /****    MODULE FUNCTIONS    ****/
 
@@ -83,6 +87,7 @@ static int rte_init(void)
     char *envar, *ev1, *ev2;
     uint64_t unique_key[2];
     char *string_key;
+    char *rmluri;
     opal_value_t *kv;
     char *val;
     int u32, *u32ptr;
@@ -97,7 +102,31 @@ static int rte_init(void)
         goto error;
     }
 
-    /* we don't have to call pmix.init because the pmix select did it */
+    /* get an async event base - we use the opal_async one so
+     * we don't startup extra threads if not needed */
+    orte_event_base = opal_progress_thread_init(NULL);
+    progress_thread_running = true;
+
+    /* open and setup pmix */
+    if (OPAL_SUCCESS != (ret = mca_base_framework_open(&opal_pmix_base_framework, 0))) {
+        ORTE_ERROR_LOG(ret);
+        /* we cannot run */
+        error = "pmix init";
+        goto error;
+    }
+    if (OPAL_SUCCESS != (ret = opal_pmix_base_select())) {
+        /* we cannot run */
+        error = "pmix init";
+        goto error;
+    }
+    /* set the event base */
+    opal_pmix_base_set_evbase(orte_event_base);
+    /* initialize the selected module */
+    if (!opal_pmix.initialized() && (OPAL_SUCCESS != (ret = opal_pmix.init()))) {
+        /* we cannot run */
+        error = "pmix init";
+        goto error;
+    }
     u32ptr = &u32;
     u16ptr = &u16;
 
@@ -353,6 +382,16 @@ static int rte_init(void)
 
     /***  PUSH DATA FOR OTHERS TO FIND   ***/
 
+    /* push our RML URI in case others need to talk directly to us */
+    rmluri = orte_rml.get_contact_info();
+    /* push it out for others to use */
+    OPAL_MODEX_SEND_VALUE(ret, OPAL_PMIX_GLOBAL, OPAL_PMIX_PROC_URI, rmluri, OPAL_STRING);
+    if (ORTE_SUCCESS != ret) {
+        error = "pmix put uri";
+        goto error;
+    }
+    free(rmluri);
+
     /* push our hostname so others can find us, if they need to */
     OPAL_MODEX_SEND_VALUE(ret, OPAL_PMIX_GLOBAL, OPAL_PMIX_HOSTNAME, orte_process_info.nodename, OPAL_STRING);
     if (ORTE_SUCCESS != ret) {
@@ -377,6 +416,12 @@ static int rte_init(void)
     return ORTE_SUCCESS;
 
  error:
+    if (!progress_thread_running) {
+        /* can't send the help message, so ensure it
+         * comes out locally
+         */
+        orte_show_help_finalize();
+    }
     if (ORTE_ERR_SILENT != ret && !orte_report_silent_errors) {
         orte_show_help("help-orte-runtime.txt",
                        "orte_init:startup:internal-failure",
@@ -402,18 +447,23 @@ static int rte_finalize(void)
         unsetenv("OMPI_APP_CTX_NUM_PROCS");
     }
 
-    /* mark us as finalized */
-    if (NULL != opal_pmix.finalize) {
-        opal_pmix.finalize();
-        (void) mca_base_framework_close(&opal_pmix_base_framework);
-    }
-
     /* use the default app procedure to finish */
     if (ORTE_SUCCESS != (ret = orte_ess_base_app_finalize())) {
         ORTE_ERROR_LOG(ret);
         return ret;
     }
 
+    /* mark us as finalized */
+    if (NULL != opal_pmix.finalize) {
+        opal_pmix.finalize();
+        (void) mca_base_framework_close(&opal_pmix_base_framework);
+    }
+
+    /* release the event base */
+    if (progress_thread_running) {
+        opal_progress_thread_finalize(NULL);
+        progress_thread_running = false;
+    }
     return ORTE_SUCCESS;
 }
 
