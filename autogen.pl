@@ -4,7 +4,7 @@
 # Copyright (c) 2010      Oracle and/or its affiliates.  All rights reserved.
 # Copyright (c) 2013      Mellanox Technologies, Inc.
 #                         All rights reserved.
-# Copyright (c) 2013-2014 Intel, Inc.  All rights reserved.
+# Copyright (c) 2013-2016 Intel, Inc.  All rights reserved.
 # Copyright (c) 2015      Research Organization for Information Science
 #                         and Technology (RIST). All rights reserved.
 # Copyright (c) 2015      IBM Corporation.  All rights reserved.
@@ -40,14 +40,10 @@ my $dnl_line = "dnl ------------------------------------------------------------
 
 # Data structures to fill up with all the stuff we find
 my $mca_found;
-my $mpiext_found;
-my $mpicontrib_found;
 my @subdirs;
 
 # Command line parameters
-my $no_ompi_arg = 0;
 my $no_orte_arg = 0;
-my $no_oshmem_arg = 0;
 my $quiet_arg = 0;
 my $debug_arg = 0;
 my $help_arg = 0;
@@ -580,180 +576,6 @@ dnl List of configure.m4 files to include\n";
 }
 
 ##############################################################################
-
-sub mpiext_process_extension {
-    my ($topdir, $ext_prefix, $extdir) = @_;
-
-    my $edir = "$topdir/$ext_prefix/$extdir";
-    return
-        if (! -d $edir);
-
-    # Process this directory (pretty much the same treatment as for
-    # MCA components, so it's in a sub).
-    my $found_ext;
-
-    $found_ext->{"name"} = $extdir;
-
-    # Push the results onto the hash array
-    push(@{$mpiext_found}, $found_ext);
-
-    # Is there an autogen.subdirs in here?
-    process_autogen_subdirs($edir);
-}
-
-##############################################################################
-
-sub mpiext_run_global {
-    my ($ext_prefix) = @_;
-
-    my $topdir = Cwd::cwd();
-
-    my $dir = "$topdir/$ext_prefix";
-    opendir(DIR, $dir) ||
-        my_die "Can't open $dir directory";
-    foreach my $d (readdir(DIR)) {
-        # Skip any non-directory, "base", or any dir that begins with "."
-        next
-            if (! -d "$dir/$d" || $d eq "base" || substr($d, 0, 1) eq ".");
-
-        # If this directory has a configure.m4, then it's an
-        # extension.
-        if (-f "$dir/$d/configure.m4") {
-            verbose "=== Found $d MPI extension";
-
-            # Check ignore status
-            if (ignored("$dir/$d")) {
-                verbose " (ignored)\n";
-            } else {
-                verbose "\n";
-                mpiext_process_extension($topdir, $ext_prefix, $d);
-            }
-        }
-    }
-    closedir(DIR);
-    debug_dump($mpiext_found);
-
-    #-----------------------------------------------------------------------
-
-    $m4 .= "\n$dnl_line
-$dnl_line
-$dnl_line
-
-dnl Open MPI extensions information
-$dnl_line\n\n";
-
-    # Array for all the m4_includes that we'll need to pick up the
-    # configure.m4's.
-    my @includes;
-    my $m4_config_ext_list;
-
-    # Troll through each of the found exts
-    foreach my $ext (@{$mpiext_found}) {
-        my $e = $ext->{name};
-        push(@includes, "$ext_prefix/$e/configure.m4");
-        $m4_config_ext_list .= ", $e";
-    }
-
-    $m4_config_ext_list =~ s/^, //;
-
-    # List the M4 and no configure exts
-    $m4 .= "dnl List of all MPI extensions
-m4_define([ompi_mpiext_list], [$m4_config_ext_list])\n";
-    # List out all the m4_include
-    $m4 .= "\ndnl List of configure.m4 files to include\n";
-    foreach my $i (@includes) {
-        $m4 .= "m4_include([$i])\n";
-    }
-}
-
-##############################################################################
-
-sub mpicontrib_process {
-    my ($topdir, $contrib_prefix, $contribdir) = @_;
-
-    my $cdir = "$topdir/$contrib_prefix/$contribdir";
-    return
-        if (! -d $cdir);
-
-    # Process this directory (pretty much the same treatment as for
-    # MCA components, so it's in a sub).
-    my $found_contrib;
-
-    $found_contrib->{"name"} = $contribdir;
-
-    # Push the results onto the hash array
-    push(@{$mpicontrib_found}, $found_contrib);
-
-    # Is there an autogen.subdirs in here?
-    process_autogen_subdirs($cdir);
-}
-
-##############################################################################
-
-sub mpicontrib_run_global {
-    my ($contrib_prefix) = @_;
-
-    my $topdir = Cwd::cwd();
-
-    my $dir = "$topdir/$contrib_prefix";
-    opendir(DIR, $dir) ||
-        my_die "Can't open $dir directory";
-    foreach my $d (readdir(DIR)) {
-        # Skip any non-directory, "base", or any dir that begins with "."
-        next
-            if (! -d "$dir/$d" || $d eq "base" || substr($d, 0, 1) eq ".");
-
-        # If this directory has a configure.m4, then it's an
-        # extension.
-        if (-f "$dir/$d/configure.m4") {
-            verbose "=== Found $d MPI contrib";
-
-            # Check ignore status
-            if (ignored("$dir/$d")) {
-                verbose " (ignored)\n";
-            } else {
-                verbose "\n";
-                mpicontrib_process($topdir, $contrib_prefix, $d);
-            }
-        }
-    }
-    closedir(DIR);
-    debug_dump($mpiext_found);
-
-    #-----------------------------------------------------------------------
-
-    $m4 .= "\n$dnl_line
-$dnl_line
-$dnl_line
-
-dnl Open MPI contrib information
-$dnl_line\n\n";
-
-    # Array for all the m4_includes that we'll need to pick up the
-    # configure.m4's.
-    my @includes;
-    my $m4_config_contrib_list;
-
-    # Troll through each of the found contribs
-    foreach my $contrib (@{$mpicontrib_found}) {
-        my $c = $contrib->{name};
-        push(@includes, "$contrib_prefix/$c/configure.m4");
-        $m4_config_contrib_list .= ", $c";
-    }
-
-    $m4_config_contrib_list =~ s/^, //;
-
-    # List the M4 and no configure exts
-    $m4 .= "dnl List of all MPI contribs
-m4_define([ompi_mpicontrib_list], [$m4_config_contrib_list])\n";
-    # List out all the m4_include
-    $m4 .= "\ndnl List of configure.m4 files to include\n";
-    foreach my $i (@includes) {
-        $m4 .= "m4_include([$i])\n";
-    }
-}
-
-##############################################################################
 # Find and remove stale files
 
 sub find_and_delete {
@@ -1047,9 +869,7 @@ sub in_tarball {
 
 # Command line parameters
 
-my $ok = Getopt::Long::GetOptions("no-ompi" => \$no_ompi_arg,
-                                  "no-orte" => \$no_orte_arg,
-                                  "no-oshmem" => \$no_oshmem_arg,
+my $ok = Getopt::Long::GetOptions("no-orte" => \$no_orte_arg,
                                   "quiet|q" => \$quiet_arg,
                                   "debug|d" => \$debug_arg,
                                   "help|h" => \$help_arg,
@@ -1063,9 +883,7 @@ if (!$ok || $help_arg) {
     print "Invalid command line argument.\n\n"
         if (!$ok);
     print "Options:
-  --no-ompi | -no-ompi          Do not build the Open MPI layer
   --no-orte | -no-orte          Do not build the ORTE layer
-  --no-oshmem | -no-oshmem      Do not build the OSHMEM layer
   --quiet | -q                  Do not display normal verbose output
   --debug | -d                  Output lots of debug information
   --help | -h                   This help list
@@ -1085,38 +903,12 @@ if (!$ok || $help_arg) {
 #---------------------------------------------------------------------------
 
 # Check for project existence
-my $project_name_long = "Open MPI";
-my $project_name_short = "openmpi";
+my $project_name_long = "SCalable Overlay Network";
+my $project_name_short = "scon";
 
-if (! -e "ompi") {
-    $no_ompi_arg = 1;
-    debug "No ompi subdirectory found - will not build MPI layer\n";
-}
 if (! -e "orte") {
     $no_orte_arg = 1;
     debug "No orte subdirectory found - will not build ORTE\n";
-}
-if (! -e "oshmem") {
-    $no_oshmem_arg = 1;
-    debug "No oshmem subdirectory found - will not build OSHMEM\n";
-}
-
-if (-e "orcm") {
-    # bozo check - ORCM requires ORTE
-    if ($no_orte_arg == 1) {
-        print "Cannot build ORCM without ORTE\n";
-        my_exit(1);
-    }
-    $project_name_long = "Open Resilient Cluster Manager";
-    $project_name_short = "open-rcm";
-} elsif ($no_ompi_arg == 1) {
-    if ($no_orte_arg == 0) {
-        $project_name_long = "Open MPI Run Time Environment";
-        $project_name_short = "open-rte";
-    } else {
-        $project_name_long = "Open Portability Access Layer";
-        $project_name_short = "open-pal";
-    }
 }
 
 #---------------------------------------------------------------------------
@@ -1236,31 +1028,6 @@ if ($include_arg) {
 
 #---------------------------------------------------------------------------
 
-++$step;
-verbose "\n$step. Running template-generating scripts\n\n";
-
-# These scripts generate fortran header files of different types, but
-# guaranteed to have the same value (i.e., so humans don't have to
-# maintain two sets of files, and potentially have values get out of
-# sync).
-
-my @scripts;
-push(@scripts, "ompi/include/mpif-values.pl");
-
-foreach my $s (@scripts) {
-    verbose "=== $s\n";
-    if (! -x $s) {
-        print "Cannot find executable $s!\nAborting.\n";
-        my_exit(1);
-    }
-    if (system($s) != 0) {
-        print "Script failed: $s\n";
-        my_exit(1);
-    }
-}
-
-#---------------------------------------------------------------------------
-
 # Find projects, frameworks, components
 ++$step;
 verbose "\n$step. Searching for projects, MCA frameworks, and MCA components\n";
@@ -1278,12 +1045,6 @@ my $projects;
 push(@{$projects}, { name => "opal", dir => "opal", need_base => 1 });
 push(@{$projects}, { name => "orte", dir => "orte", need_base => 1 })
     if (!$no_orte_arg);
-push(@{$projects}, { name => "ompi", dir => "ompi", need_base => 1 })
-    if (!$no_ompi_arg);
-push(@{$projects}, { name => "oshmem", dir => "oshmem", need_base => 1 })
-    if (!$no_ompi_arg && !$no_orte_arg && !$no_oshmem_arg);
-push(@{$projects}, { name => "orcm", dir => "orcm", need_base => 1 })
-    if (-e "orcm");
 
 $m4 .= "dnl Separate m4 define for each project\n";
 foreach my $p (@$projects) {
@@ -1296,19 +1057,6 @@ m4_define([project_name_short], [$project_name_short])\n";
 
 # Setup MCA
 mca_run_global($projects);
-
-#---------------------------------------------------------------------------
-
-# Find MPI extensions and contribs
-if (!$no_ompi_arg) {
-    ++$step;
-    verbose "\n$step. Searching for Open MPI extensions\n\n";
-    mpiext_run_global("ompi/mpiext");
-
-    ++$step;
-    verbose "\n$step. Searching for Open MPI contribs\n\n";
-    mpicontrib_run_global("ompi/contrib");
-}
 
 #---------------------------------------------------------------------------
 
