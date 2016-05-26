@@ -2,7 +2,7 @@
 /*
  * Copyright (c) 2016      Los Alamos National Security, LLC. All rights
  *                         reserved.
- * ******** ADD IBM COPYRIGHT HERE ******
+ * Copyright (c) 2016      IBM Corporation.  All rights reserved.
  * $COPYRIGHT$
  *
  * Additional copyrights may follow
@@ -90,7 +90,7 @@ static int mca_patcher_overwrite_apply_patch (mca_patcher_base_patch_t *patch)
 #if defined(__i386__)
         patch->patch_data_size = 5;
         *(unsigned char *)(patch->patch_data+0) = 0xe9;
-        *(unsigned int *) (patch->patch_data+1) = (unsigned int)(func_new_addr - func_old_addr - 5);
+        *(unsigned int *) (patch->patch_data+1) = (unsigned int)(func_new_addr - patch->patch_orig - 5);
 #elif defined(__x86_64__)
         patch->patch_data_size = 13;
         *(unsigned short*)(patch->patch_data + 0) = 0xbb49;
@@ -105,7 +105,7 @@ static int mca_patcher_overwrite_apply_patch (mca_patcher_base_patch_t *patch)
  * imm64 = i << 63 | imm41 << 22 | ic << 21 | imm5c << 16 | imm9d << 7 | imm7b
  */
          unsigned char buf[16];
-         unsigned long long imm64 =  func_new_addr - func_old_addr - 16;
+         unsigned long long imm64 =  func_new_addr - patch->patch_orig - 16;
          register unsigned long long glb_ptr  __asm__("r1");
          unsigned long long nop =
             (0x0ULL<<37) | /* O     */
@@ -133,7 +133,7 @@ static int mca_patcher_overwrite_apply_patch (mca_patcher_base_patch_t *patch)
             (1ULL                      <<  6) |
             (0x0ULL                    <<  0);
 
-         patch->data_size = 32;
+         patch->patch_data_size = 32;
 
          make_ia64_bundle(buf, movl, (glb_ptr>>22)&0x1FFFFFFFFFFULL, nop, 5);
          for (int i = 0 ; i < 16 ; ++i) {
@@ -214,7 +214,7 @@ static int mca_patcher_overwrite_apply_patch (mca_patcher_base_patch_t *patch)
         return rc;
     }
 
-#if _CALL_ELF == 2
+#if defined(_CALL_ELF) && (_CALL_ELF == 2)
     sys_addr += 8;
     hook_addr += 8;
 #endif /* _CALL_ELF == 2*/
@@ -237,7 +237,7 @@ static int mca_patcher_overwrite_apply_patch (mca_patcher_base_patch_t *patch)
 
 #endif
 
-static int mca_patcher_overwrite_patch_address (uintptr_t sys_addr, unsigned long hook_addr)
+static int mca_patcher_overwrite_patch_address (uintptr_t sys_addr, uintptr_t hook_addr)
 {
     mca_patcher_base_patch_t *patch;
     int rc;

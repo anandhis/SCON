@@ -10,7 +10,7 @@
 #                         University of Stuttgart.  All rights reserved.
 # Copyright (c) 2004-2005 The Regents of the University of California.
 #                         All rights reserved.
-# Copyright (c) 2006-2015 Cisco Systems, Inc.  All rights reserved.
+# Copyright (c) 2006-2016 Cisco Systems, Inc.  All rights reserved.
 # Copyright (c) 2006-2016 Los Alamos National Security, LLC.  All rights
 #                         reserved.
 # Copyright (c) 2006-2009 Mellanox Technologies. All rights reserved.
@@ -277,7 +277,7 @@ AC_DEFUN([OPAL_CHECK_OPENFABRICS],[
 	LDFLAGS="$ompi_check_openib_$1_save_LDFLAGS"
 	LIBS="$ompi_check_openib_$1_save_LIBS"
 
-	OMPI_SUMMARY_ADD([[Transports]],[[OpenFabrics Verbs]],[$1],[$opal_check_openib_happy])
+	OPAL_SUMMARY_ADD([[Transports]],[[OpenFabrics Verbs]],[$1],[$opal_check_openib_happy])
 
         OPAL_VAR_SCOPE_POP
     fi
@@ -412,6 +412,8 @@ AC_DEFUN([OPAL_CHECK_EXP_VERBS],[
     AC_DEFINE_UNQUOTED([HAVE_EXP_VERBS], [$have_struct_ibv_exp_send_wr], [Experimental verbs])
     AC_CHECK_DECLS([IBV_EXP_ATOMIC_HCA_REPLY_BE, IBV_EXP_QP_CREATE_ATOMIC_BE_REPLY, ibv_exp_create_qp, ibv_exp_query_device, IBV_EXP_QP_INIT_ATTR_ATOMICS_ARG],
                    [], [], [#include <infiniband/verbs_exp.h>])
+    AC_CHECK_MEMBERS([struct ibv_exp_device_attr.ext_atom, struct ibv_exp_device_attr.ext_atomic_cap], [], [],
+                     [[#include <infiniband/verbs_exp.h>]])
     AS_IF([test '$have_struct_ibv_exp_send_wr' = 1], [$1], [$2])
     OPAL_VAR_SCOPE_POP
 ])dnl

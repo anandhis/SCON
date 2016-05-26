@@ -154,14 +154,24 @@ static int rte_init(void)
     }
     orte_process_info.my_node_rank = u16;
 
-    /* get universe size */
-    OPAL_MODEX_RECV_VALUE(ret, OPAL_PMIX_UNIV_SIZE,
+    /* get max procs */
+    OPAL_MODEX_RECV_VALUE(ret, OPAL_PMIX_MAX_PROCS,
                           ORTE_PROC_MY_NAME, &u32ptr, OPAL_UINT32);
     if (OPAL_SUCCESS != ret) {
-        error = "getting univ size";
+        error = "getting max procs";
+        goto error;
+    }
+    orte_process_info.max_procs = u32;
+
+    /* get job size */
+    OPAL_MODEX_RECV_VALUE(ret, OPAL_PMIX_JOB_SIZE,
+                          ORTE_PROC_MY_NAME, &u32ptr, OPAL_UINT32);
+    if (OPAL_SUCCESS != ret) {
+        error = "getting job size";
         goto error;
     }
     orte_process_info.num_procs = u32;
+
     /* push into the environ for pickup in MPI layer for
      * MPI-3 required info key
      */
@@ -207,6 +217,9 @@ static int rte_init(void)
             ORTE_ERROR_LOG(ORTE_ERR_OUT_OF_RESOURCE);
             return ORTE_ERR_OUT_OF_RESOURCE;
         }
+        opal_output_verbose(2, orte_ess_base_framework.framework_output,
+                            "%s transport key %s",
+                            ORTE_NAME_PRINT(ORTE_PROC_MY_NAME), string_key);
         asprintf(&envar, OPAL_MCA_PREFIX"orte_precondition_transports=%s", string_key);
         putenv(envar);
         added_transport_keys = true;

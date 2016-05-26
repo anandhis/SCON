@@ -10,12 +10,13 @@
  *                         University of Stuttgart.  All rights reserved.
  * Copyright (c) 2004-2005 The Regents of the University of California.
  *                         All rights reserved.
- * Copyright (c) 2009-2014 Cisco Systems, Inc.  All rights reserved.
+ * Copyright (c) 2009-2016 Cisco Systems, Inc.  All rights reserved.
  * Copyright (c) 2013-2016 Los Alamos National Security, LLC. All rights
  *                         reserved.
  * Copyright (c) 2016      Research Organization for Information Science
  *                         and Technology (RIST). All rights reserved.
- * ******** Add IBM COPYRIGHT HERE ***********
+ * Copyright (c) 2016      IBM Corporation.  All rights reserved.
+ *
  * $COPYRIGHT$
  *
  * Additional copyrights may follow
@@ -30,6 +31,7 @@
 #include "opal/mca/memory/base/empty.h"
 #include "opal/mca/memory/base/base.h"
 #include "opal/memoryhooks/memory.h"
+#include "opal/mca/patcher/base/base.h"
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -40,7 +42,12 @@
 #include <dlfcn.h>
 #include <assert.h>
 #include <sys/time.h>
+#if defined(HAVE_SYS_SYSCALL_H)
 #include <sys/syscall.h>
+#endif
+#if defined(HAVE_LINUX_MMAN_H)
+#include <linux/mman.h>
+#endif
 
 #include "memory_patcher.h"
 #undef opal_memory_changed
@@ -91,6 +98,14 @@ opal_memory_patcher_component_t mca_memory_patcher_component = {
 #define memory_patcher_syscall syscall
 #endif
 
+/*
+ * The following block of code is #if 0'ed out because we do not need
+ * to intercept mmap() any more (mmap() only deals with memory
+ * protection; it does not invalidate any rcache entries for a given
+ * region).  But if we do someday, this is the code that we'll need.
+ * It's a little non-trivial, so we might as well keep it (and #if 0
+ * it out).
+ */
 #if 0
 
 #if OPAL_MEMORY_PATCHER_HAVE___MMAP && !OPAL_MEMORY_PATCHER_HAVE___MMAP_PROTO
@@ -138,7 +153,8 @@ static int intercept_munmap(void *start, size_t length)
     OPAL_PATCHER_BEGIN;
     int result = 0;
 
-    opal_mem_hooks_release_hook (start, length, false);
+    /* could be in a malloc implementation */
+    opal_mem_hooks_release_hook (start, length, true);
 
     if (!original_munmap) {
         result = memory_patcher_syscall(SYS_munmap, start, length);
@@ -152,11 +168,20 @@ static int intercept_munmap(void *start, size_t length)
 
 #if defined (SYS_mremap)
 
+#if defined(__linux__)
 /* on linux this function has an optional extra argument but ... can not be used here because it
  * causes issues when intercepting a 4-argument mremap call */
 static void *(*original_mremap) (void *, size_t, size_t, int, void *);
+#else
+/* mremap has a different signature on BSD systems */
+static void *(*original_mremap) (void *, size_t, void *, size_t, int);
+#endif
 
+#if defined(__linux__)
 static void *intercept_mremap (void *start, size_t oldlen, size_t newlen, int flags, void *new_address)
+#else
+static void *intercept_mremap (void *start, size_t oldlen, void *new_address, size_t newlen, int flags)
+#endif
 {
     OPAL_PATCHER_BEGIN;
     void *result = MAP_FAILED;
@@ -165,21 +190,33 @@ static void *intercept_mremap (void *start, size_t oldlen, size_t newlen, int fl
         opal_mem_hooks_release_hook (start, oldlen, true);
     }
 
+#if defined(MREMAP_FIXED)
     if (!(flags & MREMAP_FIXED)) {
         new_address = NULL;
     }
+#endif
 
+#if defined(__linux__)
     if (!original_mremap) {
         result = (void *)(intptr_t) memory_patcher_syscall (SYS_mremap, start, oldlen, newlen, flags, new_address);
     } else {
         result = original_mremap (start, oldlen, newlen, flags, new_address);
     }
+#else
+    if (!original_mremap) {
+        result = (void *)(intptr_t) memory_patcher_syscall (SYS_mremap, start, oldlen, new_address, newlen, flags);
+    } else {
+        result = original_mremap (start, oldlen, new_address, newlen, flags);
+    }
+#endif
 
     OPAL_PATCHER_END;
     return result;
 }
 
 #endif
+
+#if defined (SYS_madvise)
 
 static int (*original_madvise) (void *, size_t, int);
 
@@ -207,10 +244,12 @@ static int intercept_madvise (void *start, size_t length, int advice)
     return result;
 }
 
+#endif
+
 #if defined SYS_brk
 
 #if OPAL_MEMORY_PATCHER_HAVE___CURBRK
-void *__curbrk; /* in libc */
+extern void *__curbrk; /* in libc */
 #endif
 
 static int (*original_brk) (void *);
@@ -277,7 +316,9 @@ static size_t memory_patcher_get_shm_seg_size (const void *shmaddr)
     seg_size = 0;
 
     fd = open ("/proc/self/maps", O_RDONLY);
-    assert (fd >= 0);
+    if (fd < 0) {
+        return 0;
+    }
 
     for (size_t read_offset = 0 ; ; ) {
         ssize_t nread = read(fd, buffer + read_offset, sizeof(buffer) - 1 - read_offset);
@@ -328,7 +369,9 @@ static int intercept_shmdt (const void *shmaddr)
     OPAL_PATCHER_BEGIN;
     int result;
 
-    opal_mem_hooks_release_hook (shmaddr, memory_patcher_get_shm_seg_size (shmaddr), false);
+    /* opal_mem_hooks_release_hook should probably be updated to take a const void *.
+     * for now just cast away the const */
+    opal_mem_hooks_release_hook ((void *) shmaddr, memory_patcher_get_shm_seg_size (shmaddr), false);
 
     if (original_shmdt) {
         result = original_shmdt (shmaddr);
@@ -354,11 +397,16 @@ static int patcher_register (void)
 
 static int patcher_query (int *priority)
 {
-    if (opal_patcher->patch_symbol) {
-        *priority = mca_memory_patcher_priority;
-    } else {
+    int rc;
+
+    rc = mca_base_framework_open (&opal_patcher_base_framework, 0);
+    if (OPAL_SUCCESS != rc) {
         *priority = -1;
+        return OPAL_SUCCESS;
     }
+
+    *priority = mca_memory_patcher_priority;
+
     return OPAL_SUCCESS;
 }
 
@@ -373,12 +421,18 @@ static int patcher_open (void)
 
     was_executed_already = 1;
 
+    rc = opal_patcher_base_select ();
+    if (OPAL_SUCCESS != rc) {
+        mca_base_framework_close (&opal_patcher_base_framework);
+        return OPAL_ERR_NOT_AVAILABLE;
+    }
+
     /* set memory hooks support level */
     opal_mem_hooks_set_support (OPAL_MEMORY_FREE_SUPPORT | OPAL_MEMORY_MUNMAP_SUPPORT);
 
 #if 0
-    /* NTH: the only reason to hook mmap would be to detect memory protection. this does not invalidate
-     * any cache entries in the region. */
+    /* See above block to see why mmap() functionality is #if 0'ed
+       out */
     rc = opal_patcher->patch_symbol ("mmap", (uintptr_t) intercept_mmap, (uintptr_t *) &original_mmap);
     if (OPAL_SUCCESS != rc) {
         return rc;
@@ -397,10 +451,12 @@ static int patcher_open (void)
     }
 #endif
 
+#if defined (SYS_madvise)
     rc = opal_patcher->patch_symbol ("madvise", (uintptr_t)intercept_madvise, (uintptr_t *) &original_madvise);
     if (OPAL_SUCCESS != rc) {
         return rc;
     }
+#endif
 
 #if defined(SYS_shmdt) && defined(__linux__)
     rc = opal_patcher->patch_symbol ("shmdt", (uintptr_t) intercept_shmdt, (uintptr_t *) &original_shmdt);
@@ -418,6 +474,9 @@ static int patcher_open (void)
 
 static int patcher_close(void)
 {
-    /* NTH: is it possible to unpatch the symbols? */
+    mca_base_framework_close (&opal_patcher_base_framework);
+
+    /* Note that we don't need to unpatch any symbols here; the
+       patcher framework will take care of all of that for us. */
     return OPAL_SUCCESS;
 }
