@@ -151,8 +151,8 @@ orte_rml_oob_fini(void)
     }
     OBJ_DESTRUCT(&orte_rml_oob_module.exceptions);
 
-    /* clear the base receive */
-    orte_rml_base_comm_stop();
+    /* clear the base receive - moved this to rml_stubs to handle all components
+    orte_rml_base_comm_stop(); */
 }
 
 #if OPAL_ENABLE_FT_CR == 1

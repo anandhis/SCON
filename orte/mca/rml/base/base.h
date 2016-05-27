@@ -131,6 +131,10 @@ typedef struct {
     union {
         orte_rml_callback_fn_t        iov;
         orte_rml_buffer_callback_fn_t buffer;
+        /* for the conduits (ofi) */
+        orte_rml_transport_callback_fn_t iov_transport;
+        orte_rml_buffer_transport_callback_fn_t buf_transport;
+   
     } cbfunc;
     void *cbdata;
 
@@ -153,6 +157,8 @@ typedef struct {
     opal_object_t super;
     opal_event_t ev;
     orte_rml_send_t send;
+    /* conduit_id */
+    uint8_t conduit_id;
 } orte_rml_send_request_t;
 OBJ_CLASS_DECLARATION(orte_rml_send_request_t);
 
@@ -305,6 +311,17 @@ ORTE_DECLSPEC int orte_rml_API_ft_event(int state);
 
 ORTE_DECLSPEC void orte_rml_API_purge(orte_process_name_t *peer);
 
+ORTE_DECLSPEC int orte_rml_API_query_transports(opal_value_t **providers);
+
+ORTE_DECLSPEC int orte_rml_API_send_transport_nb(int conduit_id,orte_process_name_t* peer, struct iovec* msg,
+                                       int count, orte_rml_tag_t tag,
+                                       orte_rml_callback_fn_t cbfunc, void* cbdata);
+ORTE_DECLSPEC int orte_rml_API_send_buffer_transport_nb(int conduit_id,
+                                              orte_process_name_t* peer,
+                                              struct opal_buffer_t* buffer,
+                                              orte_rml_tag_t tag,
+                                              orte_rml_buffer_callback_fn_t cbfunc,
+                                              void* cbdata);
 END_C_DECLS
 
 #endif /* MCA_RML_BASE_H */
